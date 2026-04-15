@@ -7,19 +7,18 @@ from datetime import datetime
 # 1. Page Configuration
 st.set_page_config(page_title="The Oracle: Indian Market Decoder", page_icon="⚖️", layout="wide")
 
-# --- CUSTOM CSS FOR THE BRUTAL HONESTY THEME ---
+# Custom Styling
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
-    .stMetric { background-color: #161b22; border: 1px solid #30363d; padding: 10px; border-radius: 10px; }
+    .stMetric { background-color: #161b22; border: 1px solid #30363d; padding: 15px; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. Header & Persona
+# 2. The Persona
 st.title("⚖️ The Market Oracle: Brutal Honesty Edition")
 st.markdown("""
-> **The Council:** *A Grandmaster of Trading, an Elite Systems Mathematician, and a Master Chart Reader.* > We do not sugarcoat. We do not hope. We decode the mathematically verified reality of the Indian Stock Market. 
-> Global timelines cross-referenced. Specific events decoded.
+> **The Council:** *A Grandmaster of Trading, an Elite Systems Mathematician, and a Master Chart Reader.* > We decode the mathematically verified reality of the Indian Market. No sugarcoating.
 """)
 
 # 3. Data Loading
@@ -37,19 +36,30 @@ if data_result is None:
 else:
     df, filename = data_result
 
-    # --- TOP LEVEL NAVIGATION ---
+    # --- MARKET PULSE FILTER (Nifty 50 Context) ---
+    # We find Nifty 50 or a major proxy like RELIANCE to gauge market health
+    nifty_proxy = df[df['Ticker'] == 'RELIANCE.NS'].iloc[0] if 'RELIANCE.NS' in df['Ticker'].values else None
+    
+    st.sidebar.header("🌍 Global Market Pulse")
+    if nifty_proxy is not None:
+        # If Reliance (market leader) is below its NVI Red line, the whole market is risky
+        market_bullish = nifty_proxy['1D_NVI_Black'] > nifty_proxy['1D_NVI_Red']
+        status = "✅ STABLE" if market_bullish else "⚠️ WEAK"
+        st.sidebar.metric("Nifty Health Proxy", status)
+    else:
+        market_bullish = True # Fallback
+
+    # --- NAVIGATION ---
     st.divider()
     signal_type = st.radio("⚔️ **SELECT YOUR FATE (SIGNAL):**", ["BUY (The Bullish Rebound)", "SELL (The Bearish Collapse)"], horizontal=True)
 
-    # --- MATH ENGINE: CALCULATION LOGIC ---
-    # Bullish Logic: Oversold Stoch RSI + MACD Bullish Crossover + Price above NVI EMA
+    # --- MATH ENGINE (Fixing the 1D naming issue using string keys) ---
     bullish_mask = (
         (df['1D_Stoch_K_Black'] < 25) & 
         (df['15m_MACD_Black'] > df['15m_MACD_Red']) &
         (df['1D_NVI_Black'] > df['1D_NVI_Red'])
     )
     
-    # Bearish Logic: Overbought Stoch RSI + MACD Bearish Crossover + Price below NVI EMA
     bearish_mask = (
         (df['1D_Stoch_K_Black'] > 75) & 
         (df['15m_MACD_Black'] < df['15m_MACD_Red']) &
@@ -57,36 +67,43 @@ else:
     )
 
     if "BUY" in signal_type:
-        st.subheader("🔥 THE ELITE BULLS: Top 10 Mathematically Verified Buy Signals")
-        # Sort by lowest Stochastic (most oversold) to find best entries
+        st.subheader("🔥 THE ELITE BULLS: Top 10 Buy Signals")
+        if not market_bullish:
+            st.warning("🚨 **The Mathematician Warns:** Overall market pulse is WEAK. Even bullish setups have a higher probability of failure today.")
+        
         top_10 = df[bullish_mask].sort_values(by='1D_Stoch_K_Black', ascending=True).head(10)
         color = "green"
-        verdict = "REBOUND IMMINENT"
+        verdict = "REBOUND"
     else:
-        st.subheader("💀 THE FALLEN: Top 10 Mathematically Verified Sell Signals")
-        # Sort by highest Stochastic (most overbought) to find best exits
+        st.subheader("💀 THE FALLEN: Top 10 Sell Signals")
         top_10 = df[bearish_mask].sort_values(by='1D_Stoch_K_Black', ascending=False).head(10)
         color = "red"
-        verdict = "COLLAPSE WRITTEN"
+        verdict = "COLLAPSE"
 
-    # --- DISPLAY TOP 10 ---
+    # --- DISPLAY (Using dict access to avoid SyntaxError) ---
     if not top_10.empty:
         cols = st.columns(5)
-        for idx, row in enumerate(top_10.iloc[:10].itertuples()):
+        for idx, (i, row) in enumerate(top_10.iterrows()):
             with cols[idx % 5]:
-                st.metric(label=row.Ticker, value=f"₹{row.1D_Price}", delta=verdict, delta_color="normal" if color=="green" else "inverse")
+                # We use row['column_name'] to avoid the leading-number error
+                st.metric(
+                    label=row['Ticker'], 
+                    value=f"₹{row['1D_Price']}", 
+                    delta=verdict, 
+                    delta_color="normal" if color=="green" else "inverse"
+                )
         
         st.divider()
-        st.write("### Detailed Analysis of Selected Symbols")
-        st.table(top_10[['Ticker', '1D_Price', '1D_Stoch_K_Black', '1D_NVI_Black', '15m_MACD_Black']])
+        st.write("### 📊 Raw Oracle Data")
+        st.dataframe(top_10[['Ticker', '1D_Price', '1D_Stoch_K_Black', '1D_NVI_Black', '15m_MACD_Black']], use_container_width=True)
     else:
-        st.warning("The Mathematician finds no 100% factual setups at this moment. The market is in a state of chaos.")
+        st.info("The Mathematician finds no 100% factual setups matching this criteria right now.")
 
     # --- THE CHART READER'S INSIGHT ---
     with st.expander("📝 The Chart Reader's Final Warning"):
         if "BUY" in signal_type:
-            st.write("The NVI indicates silent accumulation by institutional players. These tickers are being absorbed while the retail crowd panics. Entry precision is 98% verified.")
+            st.write("Smart money is absorbing the selling pressure. The Stochastic RSI shows extreme exhaustion for sellers. This is where precision meets opportunity.")
         else:
-            st.write("Distribution is complete. The NVI has crossed below the red signal line, indicating smart money has exited the building. If you are still holding, you are the exit liquidity.")
+            st.write("The distribution phase is over. Indicators show that institutional support has vanished. Retail is currently holding the bag.")
 
-    st.caption(f"Vault Data: {filename} | System Analysis Complete at {datetime.now().strftime('%H:%M:%S')} IST")
+    st.caption(f"Last Vault Update: {filename}")
