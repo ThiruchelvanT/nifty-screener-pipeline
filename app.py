@@ -7,21 +7,16 @@ from datetime import datetime
 # 1. Page Configuration
 st.set_page_config(page_title="The Oracle: Indian Market Decoder", page_icon="⚖️", layout="wide")
 
-# Custom Styling
+# Custom Styling for the "Elite System" Look
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
     .stMetric { background-color: #161b22; border: 1px solid #30363d; padding: 15px; border-radius: 10px; }
+    [data-testid="stMetricDelta"] svg { display: none; } /* Hide default arrows for custom look */
     </style>
     """, unsafe_allow_html=True)
 
-# 2. The Persona
-st.title("⚖️ The Market Oracle: Brutal Honesty Edition")
-st.markdown("""
-> **The Council:** *A Grandmaster of Trading, an Elite Systems Mathematician, and a Master Chart Reader.* > We decode the mathematically verified reality of the Indian Market. No sugarcoating.
-""")
-
-# 3. Data Loading
+# 2. Data Loading Engine
 @st.cache_data
 def load_data():
     list_of_files = glob.glob('Nifty500_Scan_*.csv')
@@ -36,74 +31,71 @@ if data_result is None:
 else:
     df, filename = data_result
 
-    # --- MARKET PULSE FILTER (Nifty 50 Context) ---
-    # We find Nifty 50 or a major proxy like RELIANCE to gauge market health
+    # --- SIDEBAR: SYSTEM SETTINGS & FILTERS ---
+    st.sidebar.title("⚙️ System Core")
+    
+    # Market Pulse Proxy
     nifty_proxy = df[df['Ticker'] == 'RELIANCE.NS'].iloc[0] if 'RELIANCE.NS' in df['Ticker'].values else None
-    
-    st.sidebar.header("🌍 Global Market Pulse")
     if nifty_proxy is not None:
-        # If Reliance (market leader) is below its NVI Red line, the whole market is risky
         market_bullish = nifty_proxy['1D_NVI_Black'] > nifty_proxy['1D_NVI_Red']
-        status = "✅ STABLE" if market_bullish else "⚠️ WEAK"
-        st.sidebar.metric("Nifty Health Proxy", status)
+        st.sidebar.metric("Nifty Health Proxy", "✅ STABLE" if market_bullish else "⚠️ WEAK")
     else:
-        market_bullish = True # Fallback
+        market_bullish = True
 
-    # --- NAVIGATION ---
-    st.divider()
-    signal_type = st.radio("⚔️ **SELECT YOUR FATE (SIGNAL):**", ["BUY (The Bullish Rebound)", "SELL (The Bearish Collapse)"], horizontal=True)
+    st.sidebar.divider()
+    st.sidebar.subheader("🎚️ Sensitivity Tuning")
+    stoch_threshold = st.sidebar.slider("Stochastic RSI Bound", 10, 50, 25, help="Lower = More Brutal/Selective")
+    nvi_required = st.sidebar.toggle("Require NVI Accumulation", value=True)
 
-    # --- MATH ENGINE (Fixing the 1D naming issue using string keys) ---
-    bullish_mask = (
-        (df['1D_Stoch_K_Black'] < 25) & 
-        (df['15m_MACD_Black'] > df['15m_MACD_Red']) &
-        (df['1D_NVI_Black'] > df['1D_NVI_Red'])
-    )
-    
-    bearish_mask = (
-        (df['1D_Stoch_K_Black'] > 75) & 
-        (df['15m_MACD_Black'] < df['15m_MACD_Red']) &
-        (df['1D_NVI_Black'] < df['1D_NVI_Red'])
-    )
+    # --- MAIN TABS ---
+    tab1, tab2 = st.tabs(["🔮 THE ORACLE", "📁 THE DATA VAULT"])
 
-    if "BUY" in signal_type:
-        st.subheader("🔥 THE ELITE BULLS: Top 10 Buy Signals")
-        if not market_bullish:
-            st.warning("🚨 **The Mathematician Warns:** Overall market pulse is WEAK. Even bullish setups have a higher probability of failure today.")
+    with tab1:
+        st.title("⚖️ The Market Oracle")
+        st.markdown("> **The Council:** Decoding mathematically verified reality. No sugarcoating.")
         
-        top_10 = df[bullish_mask].sort_values(by='1D_Stoch_K_Black', ascending=True).head(10)
-        color = "green"
-        verdict = "REBOUND"
-    else:
-        st.subheader("💀 THE FALLEN: Top 10 Sell Signals")
-        top_10 = df[bearish_mask].sort_values(by='1D_Stoch_K_Black', ascending=False).head(10)
-        color = "red"
-        verdict = "COLLAPSE"
+        signal_type = st.radio("⚔️ **SIGNAL SELECTION:**", ["BUY (The Rebound)", "SELL (The Collapse)"], horizontal=True)
 
-    # --- DISPLAY (Using dict access to avoid SyntaxError) ---
-    if not top_10.empty:
-        cols = st.columns(5)
-        for idx, (i, row) in enumerate(top_10.iterrows()):
-            with cols[idx % 5]:
-                # We use row['column_name'] to avoid the leading-number error
-                st.metric(
-                    label=row['Ticker'], 
-                    value=f"₹{row['1D_Price']}", 
-                    delta=verdict, 
-                    delta_color="normal" if color=="green" else "inverse"
-                )
-        
-        st.divider()
-        st.write("### 📊 Raw Oracle Data")
-        st.dataframe(top_10[['Ticker', '1D_Price', '1D_Stoch_K_Black', '1D_NVI_Black', '15m_MACD_Black']], use_container_width=True)
-    else:
-        st.info("The Mathematician finds no 100% factual setups matching this criteria right now.")
-
-    # --- THE CHART READER'S INSIGHT ---
-    with st.expander("📝 The Chart Reader's Final Warning"):
+        # Logic Engine
         if "BUY" in signal_type:
-            st.write("Smart money is absorbing the selling pressure. The Stochastic RSI shows extreme exhaustion for sellers. This is where precision meets opportunity.")
+            mask = (df['1D_Stoch_K_Black'] < stoch_threshold) & (df['15m_MACD_Black'] > df['15m_MACD_Red'])
+            if nvi_required: mask &= (df['1D_NVI_Black'] > df['1D_NVI_Red'])
+            verdict, color, sort_asc = "REBOUND", "green", True
         else:
-            st.write("The distribution phase is over. Indicators show that institutional support has vanished. Retail is currently holding the bag.")
+            mask = (df['1D_Stoch_K_Black'] > (100 - stoch_threshold)) & (df['15m_MACD_Black'] < df['15m_MACD_Red'])
+            if nvi_required: mask &= (df['1D_NVI_Black'] < df['1D_NVI_Red'])
+            verdict, color, sort_asc = "COLLAPSE", "red", False
 
-    st.caption(f"Last Vault Update: {filename}")
+        top_10 = df[mask].sort_values(by='1D_Stoch_K_Black', ascending=sort_asc).head(10)
+
+        if not top_10.empty:
+            cols = st.columns(5)
+            for idx, (i, row) in enumerate(top_10.iterrows()):
+                with cols[idx % 5]:
+                    st.metric(label=row['Ticker'], value=f"₹{row['1D_Price']}", delta=verdict, delta_color="normal" if color=="green" else "inverse")
+            st.divider()
+            st.dataframe(top_10, use_container_width=True)
+        else:
+            st.warning("The Mathematician finds no 100% factual setups. Adjust sensitivity or wait for market alignment.")
+
+    with tab2:
+        st.title("📁 The Data Vault")
+        st.markdown("Full raw intelligence access. Use the headers to sort and the search icon to filter any column.")
+        
+        # Professional Excel-like experience
+        st.dataframe(
+            df, 
+            use_container_width=True, 
+            height=600,
+            column_config={
+                "1D_Price": st.column_config.NumberColumn("Price", format="₹%.2f"),
+                "1D_Stoch_K_Black": st.column_config.ProgressColumn("Stoch RSI", min_value=0, max_value=100),
+                "Ticker": "Stock Symbol"
+            }
+        )
+        
+        # Download Button for Excel/CSV
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Export Vault to CSV", data=csv, file_name=f"Nifty500_Full_Scan_{datetime.now().date()}.csv", mime="text/csv")
+
+    st.caption(f"Source: {filename} | Engine Active")
