@@ -23,8 +23,8 @@ jobs:
         run: |
           pip install yfinance pandas pandas-ta requests openpyxl
 
-      - name: Run Screener
-        run: python screener.py
+      - name: Run Stock_screener_nifty
+        run: python Stock_screener_nifty.py
 
       - name: Commit and Push CSV
         run: |
