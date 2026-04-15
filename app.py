@@ -36,24 +36,22 @@ if data_result is None:
 else:
     df, filename = data_result
 
-    # --- MARKET PULSE FILTER (Nifty 50 Context) ---
-    # We find Nifty 50 or a major proxy like RELIANCE to gauge market health
+    # --- MARKET PULSE FILTER ---
     nifty_proxy = df[df['Ticker'] == 'RELIANCE.NS'].iloc[0] if 'RELIANCE.NS' in df['Ticker'].values else None
     
     st.sidebar.header("🌍 Global Market Pulse")
     if nifty_proxy is not None:
-        # If Reliance (market leader) is below its NVI Red line, the whole market is risky
         market_bullish = nifty_proxy['1D_NVI_Black'] > nifty_proxy['1D_NVI_Red']
         status = "✅ STABLE" if market_bullish else "⚠️ WEAK"
         st.sidebar.metric("Nifty Health Proxy", status)
     else:
-        market_bullish = True # Fallback
+        market_bullish = True
 
     # --- NAVIGATION ---
     st.divider()
     signal_type = st.radio("⚔️ **SELECT YOUR FATE (SIGNAL):**", ["BUY (The Bullish Rebound)", "SELL (The Bearish Collapse)"], horizontal=True)
 
-    # --- MATH ENGINE (Fixing the 1D naming issue using string keys) ---
+    # --- MATH ENGINE ---
     bullish_mask = (
         (df['1D_Stoch_K_Black'] < 25) & 
         (df['15m_MACD_Black'] > df['15m_MACD_Red']) &
@@ -69,41 +67,58 @@ else:
     if "BUY" in signal_type:
         st.subheader("🔥 THE ELITE BULLS: Top 10 Buy Signals")
         if not market_bullish:
-            st.warning("🚨 **The Mathematician Warns:** Overall market pulse is WEAK. Even bullish setups have a higher probability of failure today.")
+            st.warning("🚨 **The Mathematician Warns:** Overall market pulse is WEAK.")
         
         top_10 = df[bullish_mask].sort_values(by='1D_Stoch_K_Black', ascending=True).head(10)
-        color = "green"
-        verdict = "REBOUND"
+        color, verdict = "green", "REBOUND"
     else:
         st.subheader("💀 THE FALLEN: Top 10 Sell Signals")
         top_10 = df[bearish_mask].sort_values(by='1D_Stoch_K_Black', ascending=False).head(10)
-        color = "red"
-        verdict = "COLLAPSE"
+        color, verdict = "red", "COLLAPSE"
 
-    # --- DISPLAY (Using dict access to avoid SyntaxError) ---
+    # --- SIGNAL DISPLAY ---
     if not top_10.empty:
         cols = st.columns(5)
         for idx, (i, row) in enumerate(top_10.iterrows()):
             with cols[idx % 5]:
-                # We use row['column_name'] to avoid the leading-number error
-                st.metric(
-                    label=row['Ticker'], 
-                    value=f"₹{row['1D_Price']}", 
-                    delta=verdict, 
-                    delta_color="normal" if color=="green" else "inverse"
-                )
+                st.metric(label=row['Ticker'], value=f"₹{row['1D_Price']}", delta=verdict, delta_color="normal" if color=="green" else "inverse")
         
         st.divider()
-        st.write("### 📊 Raw Oracle Data")
+        st.write("### 📊 Oracle Specifics")
         st.dataframe(top_10[['Ticker', '1D_Price', '1D_Stoch_K_Black', '1D_NVI_Black', '15m_MACD_Black']], use_container_width=True)
     else:
         st.info("The Mathematician finds no 100% factual setups matching this criteria right now.")
 
-    # --- THE CHART READER'S INSIGHT ---
+    # --- CHART READER'S INSIGHT ---
     with st.expander("📝 The Chart Reader's Final Warning"):
         if "BUY" in signal_type:
-            st.write("Smart money is absorbing the selling pressure. The Stochastic RSI shows extreme exhaustion for sellers. This is where precision meets opportunity.")
+            st.write("Smart money is absorbing pressure. Precision meets opportunity.")
         else:
-            st.write("The distribution phase is over. Indicators show that institutional support has vanished. Retail is currently holding the bag.")
+            st.write("Distribution is over. Institutional support has vanished.")
 
-    st.caption(f"Last Vault Update: {filename}")
+    # --- NEW SECTION: THE FULL DATA VAULT ---
+    st.divider()
+    st.header("📁 The Full Data Vault")
+    st.markdown("Access all mathematical data points for the Nifty 500 universe.")
+
+    # Search and Filter Logic for the Full Table
+    search_query = st.text_input("🔍 Search for a Stock (e.g., TATA, HDFC, SBIN)", "").upper()
+    
+    # Filter dataframe based on search
+    vault_df = df[df['Ticker'].str.contains(search_query)] if search_query else df
+
+    # Display the Full Table with professional formatting
+    st.dataframe(
+        vault_df, 
+        use_container_width=True, 
+        height=500,
+        column_config={
+            "1D_Price": st.column_config.NumberColumn("Current Price", format="₹%.2f"),
+            "1D_Stoch_K_Black": st.column_config.ProgressColumn("Stoch RSI (1D)", min_value=0, max_value=100),
+            "Ticker": "Symbol",
+            "1D_NVI_Black": "NVI Actual",
+            "1D_NVI_Red": "NVI Signal"
+        }
+    )
+
+    st.caption(f"Last Vault Update: {filename} | Engine Active")
