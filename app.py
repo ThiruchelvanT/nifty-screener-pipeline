@@ -60,6 +60,10 @@ else:
 
     # --- SIDEBAR: GLOBAL PULSE & SENTINEL ---
     st.sidebar.title("🌍 Global Sentinel")
+
+    if st.sidebar.button("🔄 Clear Oracle Cache"):
+        st.cache_data.clear()
+        st.rerun()
     
     # 1. Nifty Internal Health (Your existing code)
     nifty_proxy = df[df['Ticker'] == 'RELIANCE.NS'].iloc[0] if 'RELIANCE.NS' in df['Ticker'].values else None
