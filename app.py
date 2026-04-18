@@ -91,7 +91,7 @@ else:
 
     # --- MATH ENGINE ---
     bullish_mask = (
-        (df['1D_Stoch_K_Black'] < 25) & 
+        (df['1D_Stoch_K_Black'] < 40) & 
         (df['15m_MACD_Black'] > df['15m_MACD_Red']) &
         (df['1D_NVI_Black'] > df['1D_NVI_Red'])
     )
@@ -120,7 +120,14 @@ else:
         st.divider()
         st.dataframe(top_10[['Ticker', '1D_Price', '1D_Stoch_K_Black', '1D_NVI_Black', '15m_MACD_Black']], use_container_width=True)
     else:
-        st.info("The Mathematician finds no factual setups right now.")
+        # --- THE COUNCIL'S VERDICT (REPLACED BLOCK) ---
+        st.error("### 🚫 THE COUNCIL REMAINS SILENT: NO TRADE ZONE")
+        st.markdown("""
+        **The Elite Assessment:**
+        * 📐 **The Mathematician:** "Current price action lacks the volatility cluster required for a high-probability entry. Stochastic metrics are severely distorted by the recent squeeze."
+        * 📉 **The Chart Reader:** "Institutional accumulation is paused. We are currently in a 'no-man's land' of retail indecision. Forcing a setup here is gambling."
+        * ♟️ **The Grandmaster:** "Patience is a currency. We do not chase price. Cash is an active position. Remain defensive until the NVI proxy shifts decisively."
+        """)
 
     with st.expander("📝 The Chart Reader's Final Warning"):
         if "BUY" in signal_type:
