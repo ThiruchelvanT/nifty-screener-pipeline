@@ -8,8 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # Important: Allows the bot to save the CSV back to your repo
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -21,15 +19,11 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install yfinance pandas pandas-ta requests openpyxl
+          python -m pip install --upgrade pip
+          pip install yfinance pandas pandas-ta requests openpyxl psycopg2-binary
 
       - name: Run Stock_screener_nifty
+        env:
+          # Injects your secure database connection string
+          SUPABASE_URI: ${{ secrets.SUPABASE_URI }}
         run: python Stock_screener_nifty.py
-
-      - name: Commit and Push CSV
-        run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add *.csv
-          git commit -m "Auto-update: Daily Market Scan $(date +'%Y-%m-%d')" || echo "No changes to commit"
-          git push
