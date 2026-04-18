@@ -5,6 +5,9 @@ import time
 import requests
 import io
 from datetime import datetime
+import os
+import psycopg2
+from psycopg2.extras import execute_values
 
 def get_nifty_500_tickers():
     """Fetches the Nifty 500 ticker list safely and adds custom ETFs."""
@@ -111,11 +114,63 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Skipping {ticker} due to error: {e}")
 
-    # Export to CSV
+    # --- ENTERPRISE CLOUD INGESTION (Replacing CSV Export) ---
     if results:
-        final_df = pd.DataFrame(results)
-        filename = f"Nifty500_Scan_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
-        final_df.to_csv(filename, index=False)
-        print(f"\nSUCCESS: Scan complete. {len(final_df)} stocks saved to {filename}")
+        supabase_uri = os.environ.get("SUPABASE_URI")
+        
+        if not supabase_uri:
+            print("\nFATAL ERROR: SUPABASE_URI environment variable not found. Check GitHub Secrets.")
+            exit(1)
+
+        try:
+            print("\nConnecting to the Cloud Vault (Supabase)...")
+            # 1. Establish Secure Connection
+            conn = psycopg2.connect(supabase_uri)
+            cursor = conn.cursor()
+
+            # 2. Format data for Bulk Execution
+            # Order must match the columns in the UPSERT query below
+            data_tuples = [
+                (
+                    r['Ticker'], 
+                    r.get('1D_Price', None), 
+                    r.get('1D_Stoch_K_Black', None),
+                    r.get('15m_MACD_Black', None),
+                    r.get('15m_MACD_Red', None),
+                    r.get('1D_NVI_Black', None),
+                    r.get('1D_NVI_Red', None)
+                ) 
+                for r in results
+            ]
+
+            # 3. The Idempotent "Upsert" Query
+            upsert_query = """
+                INSERT INTO nifty_daily_signals 
+                (ticker, price, stoch_k, macd_black, macd_red, nvi_black, nvi_red, trade_date)
+                VALUES %s
+                ON CONFLICT (ticker, trade_date) 
+                DO UPDATE SET 
+                    price = EXCLUDED.price,
+                    stoch_k = EXCLUDED.stoch_k,
+                    macd_black = EXCLUDED.macd_black,
+                    macd_red = EXCLUDED.macd_red,
+                    nvi_black = EXCLUDED.nvi_black,
+                    nvi_red = EXCLUDED.nvi_red,
+                    updated_at = CURRENT_TIMESTAMP;
+            """
+            
+            # 4. Execute Bulk Transaction
+            execute_values(cursor, upsert_query, data_tuples)
+            conn.commit()
+            
+            print(f"SUCCESS: {len(data_tuples)} records transactionally committed to Supabase.")
+
+        except Exception as e:
+            print(f"\nDATABASE ERROR: {e}")
+            if 'conn' in locals(): conn.rollback()
+        finally:
+            if 'cursor' in locals(): cursor.close()
+            if 'conn' in locals(): conn.close()
+            
     else:
         print("\nFAILURE: No data was successfully processed.")
