@@ -125,7 +125,18 @@ if __name__ == "__main__":
         try:
             print("\nConnecting to the Cloud Vault (Supabase)...")
             # 1. Establish Secure Connection
-            conn = psycopg2.connect(supabase_uri)
+            try:
+            print("\nConnecting to the Cloud Vault (Supabase)...")
+            
+            # 1. Secure Explicit Connection (Bypasses URL Special Character Traps)
+            # You no longer need the SUPABASE_URI environment variable
+            conn = psycopg2.connect(
+                host="aws-0-ap-south-1.pooler.supabase.com",
+                port=6543,
+                dbname="postgres",
+                user="postgres.hqiniawhadllvrfudmxi",
+                password=os.environ.get("SUPABASE_PASSWORD")
+            )
             cursor = conn.cursor()
 
             # 2. Format data for Bulk Execution
