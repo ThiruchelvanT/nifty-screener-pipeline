@@ -44,14 +44,22 @@ def get_global_indices():
 # ... (Keep your global imports and page config)
 
 # --- 3. CLOUD DATA LOADING (Supabase Vault) ---
-@st.cache_data(ttl=3600) # Cache for 1 hour to save database compute
+import psycopg2
+
+# --- 3. CLOUD DATA LOADING (Raw Psycopg2 Override) ---
+@st.cache_data(ttl=3600)
 def load_data():
     try:
-        # 1. Connect to the Cloud Database using Streamlit's native SQL connection
-        conn = st.connection("sql", url=st.secrets["SUPABASE_URI"])
+        # 1. Bypass SQLAlchemy entirely. Send exact explicit parameters.
+        conn = psycopg2.connect(
+            host=st.secrets["DB_HOST"],
+            port=st.secrets["DB_PORT"],
+            dbname="postgres",
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASS"]
+        )
         
-        # 2. The 30 LPA Analytics Query
-        # We dynamically select the LATEST available date in the database to handle weekends/holidays
+        # 2. The Analytics Query
         query = """
         SELECT 
             ticker AS "Ticker",
@@ -66,13 +74,18 @@ def load_data():
         WHERE trade_date = (SELECT MAX(trade_date) FROM nifty_daily_signals);
         """
         
-        # 3. Execute and load directly into a Pandas DataFrame
-        df = conn.query(query)
+        # 3. Read directly into Pandas
+        df = pd.read_sql_query(query, conn)
+        conn.close() # Close the connection cleanly
         
         if df.empty:
             return None, None
             
-        latest_date = df['Date'].iloc[0].strftime('%Y-%m-%d')
+        # Format the date for the UI
+        latest_date = df['Date'].iloc[0]
+        if not isinstance(latest_date, str):
+            latest_date = latest_date.strftime('%Y-%m-%d')
+            
         filename_display = f"Cloud Vault - {latest_date}"
         
         return df, filename_display
