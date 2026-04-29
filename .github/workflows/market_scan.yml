@@ -24,6 +24,5 @@ jobs:
 
       - name: Run Stock_screener_nifty
         env:
-          # Injects your secure database connection string
-          SUPABASE_URI: ${{ secrets.SUPABASE_URI }}
+          SUPABASE_PASSWORD: ${{ secrets.SUPABASE_PASSWORD }}
         run: python Stock_screener_nifty.py
