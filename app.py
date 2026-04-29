@@ -4,6 +4,7 @@ import yfinance as yf
 import glob
 import os
 from datetime import datetime
+import psycopg2
 
 # 1. Page Configuration
 st.set_page_config(page_title="The Oracle: Global Intelligence", page_icon="⚖️", layout="wide")
@@ -44,7 +45,7 @@ def get_global_indices():
 # ... (Keep your global imports and page config)
 
 # --- 3. CLOUD DATA LOADING (Supabase Vault) ---
-import psycopg2
+
 
 # --- 3. CLOUD DATA LOADING (Raw Psycopg2 Override) ---
 @st.cache_data(ttl=3600)
