@@ -85,14 +85,12 @@ def load_data():
 data_result = load_data()
 global_data = get_global_indices()
 
-# ... (Keep the rest of your UI code exactly the same!)
 
-# Execute Loads
-data_result = load_data()
-global_data = get_global_indices()
+if data_result[0] is None:
+    st.error("🚨 **CRITICAL ALERT:** The Oracle has lost connection to the Cloud Vault.")
+    st.info("Please verify the Supabase Connection URI in your Streamlit Secrets.")
+    st.stop() # <-- This commands Streamlit to halt execution immediately. No ugly red errors!
 
-if data_result is None:
-    st.error("The Council is silent. CSV missing.")
 else:
     df, filename = data_result
 
