@@ -55,7 +55,7 @@ def load_data():
         conn = psycopg2.connect(
             host=st.secrets["DB_HOST"],
             port=st.secrets["DB_PORT"],
-            dbname="postgres",
+            dbname="neondb",    
             user=st.secrets["DB_USER"],
             password=st.secrets["DB_PASS"]
         )
