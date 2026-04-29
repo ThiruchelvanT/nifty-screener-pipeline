@@ -116,26 +116,22 @@ if __name__ == "__main__":
 
     # --- ENTERPRISE CLOUD INGESTION (Replacing CSV Export) ---
     if results:
-        supabase_uri = os.environ.get("SUPABASE_URI")
+        supabase_password = os.environ.get("SUPABASE_PASSWORD")
         
-        if not supabase_uri:
-            print("\nFATAL ERROR: SUPABASE_URI environment variable not found. Check GitHub Secrets.")
+        if not supabase_password:
+            print("\nFATAL ERROR: SUPABASE_PASSWORD environment variable not found. Check GitHub Secrets.")
             exit(1)
 
         try:
             print("\nConnecting to the Cloud Vault (Supabase)...")
-            # 1. Establish Secure Connection
-            try:
-            print("\nConnecting to the Cloud Vault (Supabase)...")
             
-            # 1. Secure Explicit Connection (Bypasses URL Special Character Traps)
-            # You no longer need the SUPABASE_URI environment variable
+            # 1. Secure Explicit Connection (Bypasses URL parser bugs)
             conn = psycopg2.connect(
                 host="aws-0-ap-south-1.pooler.supabase.com",
                 port=6543,
                 dbname="postgres",
                 user="postgres.hqiniawhadllvrfudmxi",
-                password=os.environ.get("SUPABASE_PASSWORD")
+                password=supabase_password
             )
             cursor = conn.cursor()
 
