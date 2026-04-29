@@ -4,3 +4,5 @@ pandas-ta
 requests
 openpyxl
 streamlit
+psycopg2-binary
+SQLAlchemy
