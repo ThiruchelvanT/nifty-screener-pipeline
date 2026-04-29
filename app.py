@@ -101,9 +101,9 @@ global_data = get_global_indices()
 
 
 if data_result[0] is None:
-    st.error("🚨 **CRITICAL ALERT:** The Oracle has lost connection to the Cloud Vault.")
-    st.info("Please verify the Supabase Connection URI in your Streamlit Secrets.")
-    st.stop() # <-- This commands Streamlit to halt execution immediately. No ugly red errors!
+    st.error("🚨 **CRITICAL ALERT:** The Oracle has lost connection to the Neon Cloud Vault.")
+    st.info("Check Streamlit Secrets or the raw error message above for details.")
+    st.stop() # <-- This commands Streamlit to halt execution immediately.
 
 else:
     df, filename = data_result
