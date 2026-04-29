@@ -48,7 +48,7 @@ def get_global_indices():
 def load_data():
     try:
         # 1. Connect to the Cloud Database using Streamlit's native SQL connection
-        conn = st.connection("supabase", type="sql")
+        conn = st.connection("sql", url=st.secrets["SUPABASE_URI"])
         
         # 2. The 30 LPA Analytics Query
         # We dynamically select the LATEST available date in the database to handle weekends/holidays
