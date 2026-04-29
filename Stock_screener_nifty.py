@@ -127,11 +127,11 @@ if __name__ == "__main__":
             
             # 1. Secure Explicit Connection (Bypasses URL parser bugs)
             conn = psycopg2.connect(
-                host="aws-0-ap-south-1.pooler.supabase.com",
-                port=6543,
-                dbname="postgres",
-                user="postgres.hqiniawhadllvrfudmxi",
-                password=supabase_password
+                host="ep-holy-star-amh8eg8r.c-5.us-east-1.aws.neon.tech", # Put your actual Neon host here
+                port=5432,
+                dbname="neondb",    # <--- CHANGE THIS FROM "postgres"
+                user="neondb_owner", # Put your actual Neon user here
+                password=supabase_password # (We can keep this variable name to avoid changing GitHub Secrets!)
             )
             cursor = conn.cursor()
 
