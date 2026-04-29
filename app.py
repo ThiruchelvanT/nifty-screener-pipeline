@@ -41,13 +41,51 @@ def get_global_indices():
             continue
     return data
 
-# 3. Local Data Loading (Nifty 500 Vault)
-@st.cache_data
+# ... (Keep your global imports and page config)
+
+# --- 3. CLOUD DATA LOADING (Supabase Vault) ---
+@st.cache_data(ttl=3600) # Cache for 1 hour to save database compute
 def load_data():
-    list_of_files = glob.glob('Nifty500_Scan_*.csv')
-    if not list_of_files: return None
-    latest_file = max(list_of_files, key=os.path.getctime)
-    return pd.read_csv(latest_file), latest_file
+    try:
+        # 1. Connect to the Cloud Database using Streamlit's native SQL connection
+        conn = st.connection("sql", url=st.secrets["SUPABASE_URI"])
+        
+        # 2. The 30 LPA Analytics Query
+        # We dynamically select the LATEST available date in the database to handle weekends/holidays
+        query = """
+        SELECT 
+            ticker AS "Ticker",
+            price AS "1D_Price",
+            stoch_k AS "1D_Stoch_K_Black",
+            macd_black AS "15m_MACD_Black",
+            macd_red AS "15m_MACD_Red",
+            nvi_black AS "1D_NVI_Black",
+            nvi_red AS "1D_NVI_Red",
+            trade_date AS "Date"
+        FROM nifty_daily_signals
+        WHERE trade_date = (SELECT MAX(trade_date) FROM nifty_daily_signals);
+        """
+        
+        # 3. Execute and load directly into a Pandas DataFrame
+        df = conn.query(query)
+        
+        if df.empty:
+            return None, None
+            
+        latest_date = df['Date'].iloc[0].strftime('%Y-%m-%d')
+        filename_display = f"Cloud Vault - {latest_date}"
+        
+        return df, filename_display
+        
+    except Exception as e:
+        st.error(f"Failed to breach the Cloud Vault: {e}")
+        return None, None
+
+# Execute Loads
+data_result = load_data()
+global_data = get_global_indices()
+
+# ... (Keep the rest of your UI code exactly the same!)
 
 # Execute Loads
 data_result = load_data()
