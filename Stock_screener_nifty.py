@@ -116,7 +116,7 @@ if __name__ == "__main__":
 
     # --- ENTERPRISE CLOUD INGESTION (Replacing CSV Export) ---
     if results:
-        supabase_password = os.environ.get("SUPABASE_PASSWORD")
+        supabase_password = os.environ.get("NEON_PASSWORD")
         
         if not supabase_password:
             print("\nFATAL ERROR: SUPABASE_PASSWORD environment variable not found. Check GitHub Secrets.")
