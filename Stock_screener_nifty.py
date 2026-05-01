@@ -136,7 +136,8 @@ if __name__ == "__main__":
             cursor = conn.cursor()
 
             # 2. Format data for Bulk Execution
-            # Order must match the columns in the UPSERT query below
+            today_str = datetime.now().strftime('%Y-%m-%d') # Generate today's date
+            
             data_tuples = [
                 (
                     r['Ticker'], 
@@ -145,7 +146,8 @@ if __name__ == "__main__":
                     r.get('15m_MACD_Black', None),
                     r.get('15m_MACD_Red', None),
                     r.get('1D_NVI_Black', None),
-                    r.get('1D_NVI_Red', None)
+                    r.get('1D_NVI_Red', None),
+                    today_str  
                 ) 
                 for r in results
             ]
@@ -162,8 +164,7 @@ if __name__ == "__main__":
                     macd_black = EXCLUDED.macd_black,
                     macd_red = EXCLUDED.macd_red,
                     nvi_black = EXCLUDED.nvi_black,
-                    nvi_red = EXCLUDED.nvi_red,
-                    updated_at = CURRENT_TIMESTAMP;
+                    nvi_red = EXCLUDED.nvi_red;
             """
             
             # 4. Execute Bulk Transaction
