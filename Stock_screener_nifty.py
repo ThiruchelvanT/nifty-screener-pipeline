@@ -138,18 +138,23 @@ if __name__ == "__main__":
             cursor = conn.cursor()
 
             # 2. Format data for Bulk Execution
-            today_str = datetime.now().strftime('%Y-%m-%d') # Generate today's date
+            today_str = datetime.now().strftime('%Y-%m-%d') 
+            
+            # --- THE DATA SANITIZER ---
+            # Strips numpy wrappers and converts NaN to safe SQL NULLs
+            def clean_num(val):
+                return float(val) if pd.notna(val) else None
             
             data_tuples = [
                 (
                     r['Ticker'], 
-                    r.get('1D_Price', None), 
-                    r.get('1D_Stoch_K_Black', None),
-                    r.get('15m_MACD_Black', None),
-                    r.get('15m_MACD_Red', None),
-                    r.get('1D_NVI_Black', None),
-                    r.get('1D_NVI_Red', None),
-                    today_str  
+                    clean_num(r.get('1D_Price')), 
+                    clean_num(r.get('1D_Stoch_K_Black')),
+                    clean_num(r.get('15m_MACD_Black')),
+                    clean_num(r.get('15m_MACD_Red')),
+                    clean_num(r.get('1D_NVI_Black')),
+                    clean_num(r.get('1D_NVI_Red')),
+                    today_str 
                 ) 
                 for r in results
             ]
