@@ -132,7 +132,7 @@ if __name__ == "__main__":
                 port=5432,
                 dbname="neondb",    
                 user="neondb_owner", 
-                password=neon_password # <--- Pass the new variable here!
+                password=neon_password,
                 sslmode="require"
             )
             cursor = conn.cursor()
