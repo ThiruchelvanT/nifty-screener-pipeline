@@ -115,23 +115,24 @@ if __name__ == "__main__":
             print(f"Skipping {ticker} due to error: {e}")
 
     # --- ENTERPRISE CLOUD INGESTION (Replacing CSV Export) ---
+    # --- ENTERPRISE CLOUD INGESTION ---
     if results:
-        supabase_password = os.environ.get("NEON_PASSWORD")
+        # 1. Look for the Neon password instead of Supabase
+        neon_password = os.environ.get("NEON_PASSWORD")
         
-        if not supabase_password:
-            print("\nFATAL ERROR: SUPABASE_PASSWORD environment variable not found. Check GitHub Secrets.")
+        if not neon_password:
+            print("\nFATAL ERROR: NEON_PASSWORD environment variable not found. Check GitHub Secrets.")
             exit(1)
 
         try:
-            print("\nConnecting to the Cloud Vault (Supabase)...")
+            print("\nConnecting to the Cloud Vault (Neon)...")
             
-            # 1. Secure Explicit Connection (Bypasses URL parser bugs)
             conn = psycopg2.connect(
-                host="ep-holy-star-amh8eg8r.c-5.us-east-1.aws.neon.tech", # Put your actual Neon host here
+                host="ep-holy-star-amh8eg8r.c-5.us-east-1.aws.neon.tech", # Your actual host
                 port=5432,
-                dbname="neondb",    # <--- CHANGE THIS FROM "postgres"
-                user="neondb_owner", # Put your actual Neon user here
-                password=supabase_password # (We can keep this variable name to avoid changing GitHub Secrets!)
+                dbname="neondb",    
+                user="neondb_owner", 
+                password=neon_password # <--- Pass the new variable here!
             )
             cursor = conn.cursor()
 
