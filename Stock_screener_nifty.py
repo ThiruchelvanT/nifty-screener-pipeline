@@ -222,3 +222,26 @@ if __name__ == "__main__":
             
     else:
         print("\nFAILURE: No data was successfully processed.")
+
+def log_todays_signals_to_audit(conn, top_buy_df, top_sell_df):
+    cursor = conn.cursor()
+    today = datetime.now().date()
+    
+    # Log Buys
+    for _, row in top_buy_df.iterrows():
+        cursor.execute("""
+            INSERT INTO signal_audit (ticker, signal_date, signal_type, entry_price)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (ticker, signal_date) DO NOTHING
+        """, (row['Ticker'], today, 'BUY', float(row['1D_Price'])))
+        
+    # Log Sells
+    for _, row in top_sell_df.iterrows():
+        cursor.execute("""
+            INSERT INTO signal_audit (ticker, signal_date, signal_type, entry_price)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (ticker, signal_date) DO NOTHING
+        """, (row['Ticker'], today, 'SELL', float(row['1D_Price'])))
+        
+    conn.commit()
+    cursor.close()
