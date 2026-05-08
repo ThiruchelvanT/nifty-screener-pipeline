@@ -95,6 +95,23 @@ def load_data():
         st.error(f"Failed to breach the Cloud Vault: {e}")
         return None, None
 
+def load_audit_kpis():
+    try:
+        conn = psycopg2.connect(
+            host=st.secrets["DB_HOST"],
+            port=st.secrets["DB_PORT"],
+            dbname="neondb",    
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASS"]
+        )
+        # Fetch only the signals that have been validated (exit_price is not null)
+        query = "SELECT is_accurate FROM signal_audit WHERE is_accurate IS NOT NULL"
+        df_audit = pd.read_sql_query(query, conn)
+        conn.close()
+        return df_audit
+    except:
+        return pd.DataFrame() # Return empty if table doesn't exist yet
+
 # Execute Loads
 data_result = load_data()
 global_data = get_global_indices()
@@ -135,6 +152,25 @@ else:
         )
 
     # --- MAIN UI ---
+    # --- PHASE 3: ACCURACY AUDIT DASHBOARD ---
+    audit_df = load_audit_kpis()
+    
+    if not audit_df.empty:
+        total_audited = len(audit_df)
+        accuracy_rate = (audit_df['is_accurate'].sum() / total_audited) * 100
+        
+        # Create a clean KPI row at the top
+        kpi1, kpi2, kpi3 = st.columns(3)
+        with kpi1:
+            st.metric("System Accuracy", f"{accuracy_rate:.1f}%", help="Calculated based on next-day price movement.")
+        with kpi2:
+            st.metric("Signals Audited", total_audited)
+        with kpi3:
+            # Show the result of the very last trade
+            last_result = "✅ WIN" if audit_df['is_accurate'].iloc[-1] else "❌ LOSS"
+            st.metric("Last Audit", last_result)
+        
+        st.divider()
     st.title("⚖️ The Market Oracle")
     
     signal_type = st.radio("⚔️ **SIGNAL SELECTION:**", ["BUY (The Rebound)", "SELL (The Collapse)"], horizontal=True)
