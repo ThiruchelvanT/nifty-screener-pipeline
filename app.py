@@ -2,11 +2,11 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import psycopg2
-from datetime import datetime
 
 # 1. Page Configuration
 st.set_page_config(page_title="The Oracle: Global Intelligence", page_icon="⚖️", layout="wide")
 
+# Custom Styling
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
@@ -14,66 +14,172 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# 2. Global Index Fetcher
+@st.cache_data(ttl=300) 
+def get_global_indices():
+    indices = {
+        "^DJI": "Dow Jones (US)", "^IXIC": "Nasdaq (US)", "^GSPC": "S&P 500 (US)",
+        "^FTSE": "FTSE 100 (UK)", "^N225": "Nikkei 225 (JP)", "BTC-USD": "Bitcoin"
+    }
+    data = []
+    for ticker, name in indices.items():
+        try:
+            t = yf.Ticker(ticker)
+            hist = t.history(period="2d")
+            if len(hist) >= 2:
+                current_price = hist['Close'].iloc[-1]
+                prev_price = hist['Close'].iloc[-2]
+                change = ((current_price - prev_price) / prev_price) * 100
+                data.append({"Name": name, "Price": current_price, "Change": change})
+        except:
+            continue
+    return data
+
+# 3. Database Fetchers
 @st.cache_data(ttl=3600)
 def load_data():
     try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        query = "SELECT ticker AS \"Ticker\", price AS \"1D_Price\", stoch_k AS \"1D_Stoch_K_Black\", macd_black AS \"15m_MACD_Black\", macd_red AS \"15m_MACD_Red\", nvi_black AS \"1D_NVI_Black\", nvi_red AS \"1D_NVI_Red\", trade_date AS \"Date\" FROM nifty_daily_signals WHERE trade_date = (SELECT MAX(trade_date) FROM nifty_daily_signals);"
+        conn = psycopg2.connect(
+            host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
+            user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
+        )
+        query = """
+        SELECT ticker AS "Ticker", price AS "1D_Price", stoch_k AS "1D_Stoch_K_Black",
+               macd_black AS "15m_MACD_Black", macd_red AS "15m_MACD_Red",
+               nvi_black AS "1D_NVI_Black", nvi_red AS "1D_NVI_Red", trade_date AS "Date"
+        FROM nifty_daily_signals
+        WHERE trade_date = (SELECT MAX(trade_date) FROM nifty_daily_signals);
+        """
         df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df, f"Cloud Vault - {df['Date'].iloc[0]}" if not df.empty else (None, None)
-    except: return None, None
+        conn.close() 
+        
+        if df.empty: return None, None
+        
+        latest_date = df['Date'].iloc[0]
+        if not isinstance(latest_date, str): latest_date = latest_date.strftime('%Y-%m-%d')
+        return df, f"Cloud Vault - {latest_date}"
+    except Exception as e:
+        st.error(f"Failed to breach the Cloud Vault: {e}")
+        return None, None
 
 def load_audit_kpis():
     try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        df_audit = pd.read_sql_query("SELECT is_accurate FROM signal_audit WHERE is_accurate IS NOT NULL", conn)
+        conn = psycopg2.connect(
+            host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
+            user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
+        )
+        query = "SELECT is_accurate FROM signal_audit WHERE is_accurate IS NOT NULL"
+        df_audit = pd.read_sql_query(query, conn)
         conn.close()
         return df_audit
-    except: return pd.DataFrame()
+    except Exception as e:
+        print(f"Audit Load Error: {e}")
+        return pd.DataFrame()
 
-# Data Execution
-data_df, filename = load_data()
+# Execute Loads
+data_result = load_data()
+global_data = get_global_indices()
 audit_df = load_audit_kpis()
 
-if data_df is None:
-    st.error("🚨 **CRITICAL ALERT:** Connection Lost.")
-    st.stop()
+if data_result[0] is None:
+    st.error("🚨 **CRITICAL ALERT:** The Oracle has lost connection to the Neon Cloud Vault.")
+    st.info("Check Streamlit Secrets or the raw error message above for details.")
+    st.stop() 
+else:
+    df, filename = data_result
 
-# --- MAIN UI ---
-if not audit_df.empty:
-    acc = (audit_df['is_accurate'].sum() / len(audit_df)) * 100
-    k1, k2, k3 = st.columns(3)
-    k1.metric("System Accuracy", f"{acc:.1f}%")
-    k2.metric("Signals Audited", len(audit_df))
-    k3.metric("Last Audit", "✅ WIN" if audit_df['is_accurate'].iloc[-1] else "❌ LOSS")
+    # --- SIDEBAR: GLOBAL PULSE & SENTINEL ---
+    st.sidebar.title("🌍 Global Sentinel")
+
+    if st.sidebar.button("🔄 Clear Oracle Cache"):
+        st.cache_data.clear()
+        st.rerun()
+    
+    nifty_proxy = df[df['Ticker'] == 'RELIANCE.NS'].iloc[0] if 'RELIANCE.NS' in df['Ticker'].values else None
+    if nifty_proxy is not None:
+        market_bullish = nifty_proxy['1D_NVI_Black'] > nifty_proxy['1D_NVI_Red']
+        st.sidebar.metric("Nifty Health Proxy", "✅ STABLE" if market_bullish else "⚠️ WEAK")
+    else:
+        market_bullish = True
+
+    st.sidebar.divider()
+    
+    st.sidebar.subheader("International Markets")
+    for index in global_data:
+        st.sidebar.metric(label=index['Name'], value=f"{index['Price']:,.2f}", delta=f"{index['Change']:.2f}%")
+
+    # --- MAIN UI ---
+    
+    # --- PHASE 3: ACCURACY AUDIT DASHBOARD ---
+    if not audit_df.empty:
+        total_audited = len(audit_df)
+        accuracy_rate = (audit_df['is_accurate'].sum() / total_audited) * 100
+        
+        kpi1, kpi2, kpi3 = st.columns(3)
+        with kpi1:
+            st.metric("System Accuracy", f"{accuracy_rate:.1f}%", help="Calculated based on next-day price movement.")
+        with kpi2:
+            st.metric("Signals Audited", total_audited)
+        with kpi3:
+            last_result = "✅ WIN" if audit_df['is_accurate'].iloc[-1] else "❌ LOSS"
+            st.metric("Last Audit", last_result)
+        
+        st.divider()
+
+    st.title("⚖️ The Market Oracle")
+    
+    signal_type = st.radio("⚔️ **SIGNAL SELECTION:**", ["BUY (The Rebound)", "SELL (The Collapse)"], horizontal=True)
+
+    # --- MATH ENGINE ---
+    bullish_mask = (
+        (df['1D_Stoch_K_Black'] < 40) & 
+        (df['15m_MACD_Black'] > df['15m_MACD_Red']) &
+        (df['1D_NVI_Black'] > df['1D_NVI_Red'])
+    )
+    
+    bearish_mask = (
+        (df['1D_Stoch_K_Black'] > 75) & 
+        (df['15m_MACD_Black'] < df['15m_MACD_Red']) &
+        (df['1D_NVI_Black'] < df['1D_NVI_Red'])
+    )
+
+    if "BUY" in signal_type:
+        st.subheader("🔥 THE ELITE BULLS")
+        top_10 = df[bullish_mask].sort_values(by='1D_Stoch_K_Black', ascending=True).head(10)
+        color, verdict = "green", "REBOUND"
+    else:
+        st.subheader("💀 THE FALLEN")
+        top_10 = df[bearish_mask].sort_values(by='1D_Stoch_K_Black', ascending=False).head(10)
+        color, verdict = "red", "COLLAPSE"
+
+    # --- SIGNAL DISPLAY ---
+    if not top_10.empty:
+        cols = st.columns(5)
+        for idx, (i, row) in enumerate(top_10.iterrows()):
+            with cols[idx % 5]:
+                st.metric(label=row['Ticker'], value=f"₹{row['1D_Price']}", delta=verdict, delta_color="normal" if color=="green" else "inverse")
+        st.divider()
+        st.dataframe(top_10[['Ticker', '1D_Price', '1D_Stoch_K_Black', '1D_NVI_Black', '15m_MACD_Black']], use_container_width=True)
+    else:
+        st.error("### 🚫 THE COUNCIL REMAINS SILENT: NO TRADE ZONE")
+        st.markdown("""
+        **The Elite Assessment:**
+        * 📐 **The Mathematician:** "Current price action lacks the volatility cluster required for a high-probability entry."
+        * 📉 **The Chart Reader:** "Institutional accumulation is paused. We are currently in a 'no-man's land' of retail indecision."
+        * ♟️ **The Grandmaster:** "Patience is a currency. We do not chase price. Remain defensive until the NVI proxy shifts decisively."
+        """)
+
+    with st.expander("📝 The Chart Reader's Final Warning"):
+        if "BUY" in signal_type:
+            st.write("Smart money is absorbing pressure. Precision meets opportunity.")
+        else:
+            st.write("Distribution is over. Institutional support has vanished.")
+
+    # --- THE FULL DATA VAULT ---
     st.divider()
+    st.header("📁 The Full Data Vault")
+    search_query = st.text_input("🔍 Search Stock Symbol (e.g., TATA, HDFC)", "").upper()
+    vault_df = df[df['Ticker'].str.contains(search_query)] if search_query else df
+    st.dataframe(vault_df, use_container_width=True, height=400)
 
-st.title("⚖️ The Market Oracle")
-signal_type = st.radio("⚔️ **SIGNAL:**", ["BUY", "SELL"], horizontal=True)
-
-# Math Logic
-b_mask = (data_df['1D_Stoch_K_Black'] < 40) & (data_df['15m_MACD_Black'] > data_df['15m_MACD_Red']) & (data_df['1D_NVI_Black'] > data_df['1D_NVI_Red'])
-s_mask = (data_df['1D_Stoch_K_Black'] > 75) & (data_df['15m_MACD_Black'] < data_df['15m_MACD_Red']) & (data_df['1D_NVI_Black'] < data_df['1D_NVI_Red'])
-
-if "BUY" in signal_type:
-    top_10 = data_df[b_mask].sort_values(by='1D_Stoch_K_Black').head(10)
-    color, verdict = "green", "REBOUND"
-else:
-    top_10 = data_df[s_mask].sort_values(by='1D_Stoch_K_Black', ascending=False).head(10)
-    color, verdict = "red", "COLLAPSE"
-
-if not top_10.empty:
-    cols = st.columns(5)
-    for idx, (i, row) in enumerate(top_10.iterrows()):
-        with cols[idx % 5]: st.metric(label=row['Ticker'], value=f"₹{row['1D_Price']}", delta=verdict, delta_color="normal" if color=="green" else "inverse")
-    st.dataframe(top_10[['Ticker', '1D_Price', '1D_Stoch_K_Black', '1D_NVI_Black']], use_container_width=True)
-else:
-    st.error("### 🚫 NO TRADE ZONE - The Oracle is Silent")
-
-st.divider()
-st.header("📁 Data Vault")
-search = st.text_input("🔍 Search Symbol", "").upper()
-final_df = data_df[data_df['Ticker'].str.contains(search)] if search else data_df
-st.dataframe(final_df, use_container_width=True)
-st.caption(f"Update: {filename}")
+    st.caption(f"Last Vault Update: {filename}")
