@@ -10,16 +10,22 @@ import psycopg2
 from psycopg2.extras import execute_values
 
 def get_nifty_500_tickers():
+    """Fetches the Nifty 500 ticker list safely and adds custom ETFs."""
     url = "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     try:
         response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status() 
         df_list = pd.read_csv(io.StringIO(response.text))
         tickers = df_list['Symbol'].apply(lambda x: x + ".NS").tolist()
+        print("Successfully fetched live Nifty 500 list from NSE.")
     except Exception as e:
+        print(f"Error fetching live list: {e}. Using fallback.")
         tickers = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS"] 
+        
     for etf in ["SILVERBEES.NS", "GOLDBEES.NS"]:
-        if etf not in tickers: tickers.append(etf)
+        if etf not in tickers:
+            tickers.append(etf)
     return tickers
 
 def validate_yesterday_signals(conn):
@@ -35,15 +41,19 @@ def validate_yesterday_signals(conn):
     for ticker, entry_price, sig_type, sig_date in pending:
         data = yf.download(ticker, period="1d", interval="1m", progress=False)
         if not data.empty:
-            # Flatten columns if MultiIndex
-            if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
+            if isinstance(data.columns, pd.MultiIndex): 
+                data.columns = data.columns.get_level_values(0)
             
             current_price = float(data['Close'].iloc[-1])
-            accurate = (sig_type == 'BUY' and current_price > entry_price) or \
-                       (sig_type == 'SELL' and current_price < entry_price)
+            accurate = False
+            if sig_type == 'BUY' and current_price > entry_price:
+                accurate = True
+            elif sig_type == 'SELL' and current_price < entry_price:
+                accurate = True
             
             cursor.execute("""
-                UPDATE signal_audit SET exit_price = %s, is_accurate = %s 
+                UPDATE signal_audit 
+                SET exit_price = %s, is_accurate = %s 
                 WHERE ticker = %s AND signal_date = %s
             """, (current_price, accurate, ticker, sig_date))
     conn.commit()
@@ -76,58 +86,126 @@ def log_todays_signals_to_audit(conn, full_results_df):
     cursor.close()
 
 def calculate_metrics(df, interval_prefix):
+    """Calculates all indicators for a given dataframe with error handling."""
     if df is None or df.empty or len(df) < 260: return {}
     try:
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-        macd = df.ta.macd(); rsi2 = df.ta.rsi(length=2); rsi14 = df.ta.rsi(length=14); stoch = df.ta.stochrsi()
+        if isinstance(df.columns, pd.MultiIndex): 
+            df.columns = df.columns.get_level_values(0)
+
+        macd = df.ta.macd(fast=12, slow=26, signal=9)
+        rsi2 = df.ta.rsi(length=2)
+        rsi14 = df.ta.rsi(length=14)
+        stoch = df.ta.stochrsi(length=14, rsi_length=14, k=3, d=3)
+        
         nvi_vals = [100.0]
         for i in range(1, len(df)):
-            roc = (df['Close'].iloc[i] - df['Close'].iloc[i-1]) / df['Close'].iloc[i-1]
-            nvi_vals.append(nvi_vals[-1] + roc * nvi_vals[-1] if df['Volume'].iloc[i] < df['Volume'].iloc[i-1] else nvi_vals[-1])
-        df['NVI_B'] = nvi_vals; df['NVI_R'] = ta.ema(df['NVI_B'], length=255)
+            if df['Volume'].iloc[i] < df['Volume'].iloc[i-1]:
+                roc = (df['Close'].iloc[i] - df['Close'].iloc[i-1]) / df['Close'].iloc[i-1]
+                nvi_vals.append(nvi_vals[-1] + (roc * nvi_vals[-1]))
+            else:
+                nvi_vals.append(nvi_vals[-1])
+        
+        df['NVI_B'] = nvi_vals
+        df['NVI_R'] = ta.ema(df['NVI_B'], length=255)
+
         return {
             f"{interval_prefix}_Price": round(df['Close'].iloc[-1], 2),
             f"{interval_prefix}_MACD_Black": round(macd.iloc[-1, 0], 2),
             f"{interval_prefix}_MACD_Red": round(macd.iloc[-1, 2], 2),
+            f"{interval_prefix}_RSI_2": round(rsi2.iloc[-1], 2),
+            f"{interval_prefix}_RSI_14": round(rsi14.iloc[-1], 2),
             f"{interval_prefix}_Stoch_K_Black": round(stoch.iloc[-1, 0], 2),
+            f"{interval_prefix}_Stoch_D_Red": round(stoch.iloc[-1, 1], 2),
             f"{interval_prefix}_NVI_Black": round(df['NVI_B'].iloc[-1], 2),
             f"{interval_prefix}_NVI_Red": round(df['NVI_R'].iloc[-1], 2)
         }
-    except: return {}
+    except Exception as e:
+        print(f"   [!] Indicator math failed for {interval_prefix}: {e}")
+        return {}
 
 if __name__ == "__main__":
     tickers = get_nifty_500_tickers()
+    print(f"\nScanning {len(tickers)} symbols. This will take some time due to rate limits...")
+
     results = []
-    neon_password = os.environ.get("NEON_PASSWORD")
-    
-    # 1. Processing
     for i, ticker in enumerate(tickers):
         try:
-            d1 = yf.download(ticker, period="3y", interval="1d", auto_adjust=True, progress=False).dropna()
-            m15 = yf.download(ticker, period="1mo", interval="15m", auto_adjust=True, progress=False).dropna()
-            d1_m = calculate_metrics(d1, "1D"); m15_m = calculate_metrics(m15, "15m")
-            if d1_m and m15_m:
-                res = {"Ticker": ticker}; res.update(d1_m); res.update(m15_m)
-                results.append(res)
-            time.sleep(0.2)
-        except: continue
+            d1_df = yf.download(ticker, period="3y", interval="1d", auto_adjust=True, progress=False).dropna()
+            m15_df = yf.download(ticker, period="1mo", interval="15m", auto_adjust=True, progress=False).dropna()
+            
+            d1_metrics = calculate_metrics(d1_df, "1D")
+            m15_metrics = calculate_metrics(m15_df, "15m")
+            
+            if d1_metrics and m15_metrics:
+                combined = {"Ticker": ticker}
+                combined.update(d1_metrics)
+                combined.update(m15_metrics)
+                results.append(combined)
+                
+            if (i + 1) % 25 == 0:
+                print(f"Progress: {i + 1}/{len(tickers)} stocks processed...")
 
-    # 2. DB Sync
-    if results and neon_password:
-        conn = psycopg2.connect(host="ep-holy-star-amh8eg8r.c-5.us-east-1.aws.neon.tech", dbname="neondb", user="neondb_owner", password=neon_password, sslmode="require")
-        
-        print("Starting Audit of yesterday's signals...")
-        validate_yesterday_signals(conn)
-        
-        cursor = conn.cursor()
-        today_str = datetime.now().strftime('%Y-%m-%d')
-        data_tuples = [(r['Ticker'], r.get('1D_Price'), r.get('1D_Stoch_K_Black'), r.get('15m_MACD_Black'), r.get('15m_MACD_Red'), r.get('1D_NVI_Black'), r.get('1D_NVI_Red'), today_str) for r in results]
-        
-        upsert_query = "INSERT INTO nifty_daily_signals (ticker, price, stoch_k, macd_black, macd_red, nvi_black, nvi_red, trade_date) VALUES %s ON CONFLICT (ticker, trade_date) DO UPDATE SET price=EXCLUDED.price, stoch_k=EXCLUDED.stoch_k, macd_black=EXCLUDED.macd_black, macd_red=EXCLUDED.macd_red, nvi_black=EXCLUDED.nvi_black, nvi_red=EXCLUDED.nvi_red;"
-        execute_values(cursor, upsert_query, data_tuples)
-        conn.commit()
+            time.sleep(0.5) 
+        except Exception as e:
+            pass
 
-        print("Logging today's Elite signals for audit...")
-        log_todays_signals_to_audit(conn, pd.DataFrame(results))
-        conn.close()
-        print("Process Complete.")
+    # --- ENTERPRISE CLOUD INGESTION ---
+    if results:
+        neon_password = os.environ.get("NEON_PASSWORD")
+        if not neon_password:
+            print("\nFATAL ERROR: NEON_PASSWORD environment variable not found.")
+            exit(1)
+
+        try:
+            print("\nConnecting to the Cloud Vault (Neon)...")
+            # REMEMBER TO USE YOUR ACTUAL NEON HOST HERE
+            conn = psycopg2.connect(
+                host="ep-holy-star-amh8eg8r.c-5.us-east-1.aws.neon.tech", 
+                port=5432,
+                dbname="neondb",    
+                user="neondb_owner", 
+                password=neon_password,
+                sslmode="require"
+            )
+            
+            print("Step 1: Auditing yesterday's signals...")
+            validate_yesterday_signals(conn)
+
+            cursor = conn.cursor()
+            today_str = datetime.now().strftime('%Y-%m-%d') 
+            
+            def clean_num(val):
+                return float(val) if pd.notna(val) else None
+            
+            data_tuples = [
+                (
+                    r['Ticker'], clean_num(r.get('1D_Price')), clean_num(r.get('1D_Stoch_K_Black')),
+                    clean_num(r.get('15m_MACD_Black')), clean_num(r.get('15m_MACD_Red')),
+                    clean_num(r.get('1D_NVI_Black')), clean_num(r.get('1D_NVI_Red')), today_str 
+                ) for r in results
+            ]
+
+            upsert_query = """
+                INSERT INTO nifty_daily_signals 
+                (ticker, price, stoch_k, macd_black, macd_red, nvi_black, nvi_red, trade_date)
+                VALUES %s
+                ON CONFLICT (ticker, trade_date) DO UPDATE SET 
+                    price = EXCLUDED.price, stoch_k = EXCLUDED.stoch_k,
+                    macd_black = EXCLUDED.macd_black, macd_red = EXCLUDED.macd_red,
+                    nvi_black = EXCLUDED.nvi_black, nvi_red = EXCLUDED.nvi_red;
+            """
+            execute_values(cursor, upsert_query, data_tuples)
+            conn.commit()
+            print(f"SUCCESS: {len(data_tuples)} records committed to the Cloud Vault.")
+
+            print("Step 2: Logging today's Elite signals for tomorrow's audit...")
+            log_todays_signals_to_audit(conn, pd.DataFrame(results))
+            
+        except Exception as e:
+            print(f"\nDATABASE ERROR: {e}")
+            if 'conn' in locals(): conn.rollback()
+        finally:
+            if 'cursor' in locals(): cursor.close()
+            if 'conn' in locals(): conn.close()
+    else:
+        print("\nFAILURE: No data was successfully processed.")
