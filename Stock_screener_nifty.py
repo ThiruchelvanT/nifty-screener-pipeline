@@ -33,6 +33,39 @@ def get_nifty_500_tickers():
             tickers.append(etf)
     return tickers
 
+def validate_yesterday_signals(conn):
+    cursor = conn.cursor()
+    # Find signals from the previous trading day that haven't been validated
+    cursor.execute("""
+        SELECT ticker, entry_price, signal_type, signal_date 
+        FROM signal_audit 
+        WHERE exit_price IS NULL AND signal_date < CURRENT_DATE
+    """)
+    pending = cursor.fetchall()
+
+    for ticker, entry_price, sig_type, sig_date in pending:
+        # Fetch today's current/closing price
+        data = yf.download(ticker, period="1d", interval="1m")
+        if not data.empty:
+            current_price = data['Close'].iloc[-1]
+            
+            # Logic: If BUY, was current price higher? If SELL, was it lower?
+            accurate = False
+            if sig_type == 'BUY' and current_price > entry_price:
+                accurate = True
+            elif sig_type == 'SELL' and current_price < entry_price:
+                accurate = True
+            
+            # Update the audit table
+            cursor.execute("""
+                UPDATE signal_audit 
+                SET exit_price = %s, is_accurate = %s 
+                WHERE ticker = %s AND signal_date = %s
+            """, (float(current_price), accurate, ticker, sig_date))
+    
+    conn.commit()
+    cursor.close()
+
 def calculate_metrics(df, interval_prefix):
     """Calculates all indicators for a given dataframe with error handling."""
     if df is None or df.empty or len(df) < 260:
