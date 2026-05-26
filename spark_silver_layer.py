@@ -161,7 +161,17 @@ silver_df = test_df.groupBy("ticker", "timeframe").applyInPandas(process_partiti
 
 # 6. View the Results
 print("📊 Transformation Complete! Here is the enriched data:")
-# Filter out nulls (which naturally occur at the start of moving averages) to see real numbers
 silver_df.filter("macd_black IS NOT NULL").show(10, truncate=False)
 
+# 7. The Final Save: Write back to NeonDB Silver Table
+print("💾 Saving enriched data to Neon Database...")
+silver_df.write.jdbc(
+    url=jdbc_url, 
+    table="silver_technical_indicators", 
+    mode="append", 
+    properties=properties
+)
+print("✅ Data successfully locked in the vault!")
+
 spark.stop()
+
