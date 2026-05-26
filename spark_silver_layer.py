@@ -96,8 +96,12 @@ spark = SparkSession.builder \
 print("📥 Fetching Bronze Data...")
 df = spark.read.jdbc(url=jdbc_url, table="bronze_raw_ohlcv", properties=properties)
 
-# We will limit the test to just 2 tickers to make the terminal output fast and clean
-test_df = df.filter(df.ticker.isin("RELIANCE.NS", "HDFCBANK.NS"))
+# Remove the test_df filter entirely! We process everything now.
+
+print("⚙️ Calculating Technical Indicators...")
+
+# Apply the math to the FULL dataframe (df) instead of test_df
+silver_df = df.groupBy("ticker", "timeframe").applyInPandas(process_partition, schema=silver_schema)
 
 # 3. Define the Schema for the output
 silver_schema = """
