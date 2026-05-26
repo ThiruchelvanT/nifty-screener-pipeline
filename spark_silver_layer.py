@@ -172,7 +172,7 @@ print("💾 Saving enriched data to Neon Database...")
 silver_df.write.jdbc(
     url=jdbc_url, 
     table="silver_technical_indicators", 
-    mode="append", 
+    mode="overwrite", 
     properties=properties
 )
 print("✅ Data successfully locked in the vault!")
