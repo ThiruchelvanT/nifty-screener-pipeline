@@ -121,7 +121,12 @@ def process_partition(pdf):
     # 'pdf' is now a single Pandas DataFrame containing one ticker's timeframe data
     import pandas_ta as ta
     pdf = pdf.sort_values('datetime')
-    
+
+    pdf['open'] = pdf['open'].astype(float)
+    pdf['high'] = pdf['high'].astype(float)
+    pdf['low'] = pdf['low'].astype(float)
+    pdf['close'] = pdf['close'].astype(float)
+    pdf['volume'] = pdf['volume'].astype(float)
     # MACD
     macd = pdf.ta.macd(fast=12, slow=26, signal=9)
     if macd is not None:
