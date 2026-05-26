@@ -149,6 +149,10 @@ def process_partition(pdf):
         
     # NVI
     pdf['nvi_black'] = pdf.ta.nvi(close=pdf['close'], volume=pdf['volume'])
+    if pdf['nvi_black'] is not None:
+        pdf['nvi_red'] = ta.ema(pdf['nvi_black'], length=255)
+    else:
+        pdf['nvi_red'] = None
     
     # Return a standard Pandas DataFrame matching the exact schema
     return pdf[['ticker', 'datetime', 'timeframe', 'open', 'high', 'low', 'close', 
