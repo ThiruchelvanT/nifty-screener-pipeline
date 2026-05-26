@@ -113,7 +113,8 @@ silver_schema = """
     rsi_2 double, 
     rsi_14 double, 
     stochrsi_k double, 
-    nvi_black double
+    nvi_black double,
+    nvi_red double
 """
 
 # 4. Transformation Logic (Corrected for applyInPandas)
@@ -169,11 +170,16 @@ silver_df.filter("macd_black IS NOT NULL").show(10, truncate=False)
 
 # 7. The Final Save: Write back to NeonDB Silver Table
 print("💾 Saving enriched data to Neon Database...")
+
+# CRITICAL: Prevent Spark from dropping the table and destroying the Primary Key
+write_properties = properties.copy()
+write_properties["truncate"] = "true"
+
 silver_df.write.jdbc(
     url=jdbc_url, 
     table="silver_technical_indicators", 
     mode="overwrite", 
-    properties=properties
+    properties=write_properties
 )
 print("✅ Data successfully locked in the vault!")
 
