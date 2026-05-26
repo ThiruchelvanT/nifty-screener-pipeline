@@ -179,3 +179,34 @@ print("✅ Data successfully locked in the vault!")
 
 spark.stop()
 
+# ==========================================
+# 8. THE GOLD LAYER AUTOMATION (Compute Pushdown)
+# ==========================================
+import psycopg2
+
+print("🔄 Triggering Gold Layer Materialized View Refresh...")
+
+try:
+    # Connect directly to Neon via psycopg2
+    conn = psycopg2.connect(
+        host=NEON_HOST,
+        database="neondb",
+        user="neondb_owner",
+        password=db_password,
+        port="5432"
+    )
+    conn.autocommit = True # Required for REFRESH commands
+    cursor = conn.cursor()
+    
+    # Instruct the database engine to refresh the Gold view
+    cursor.execute("REFRESH MATERIALIZED VIEW gold_screener_latest;")
+    
+    print("🏆 Gold Layer successfully refreshed! The pipeline is complete.")
+    
+except Exception as e:
+    print(f"❌ Failed to refresh Gold Layer: {e}")
+finally:
+    if 'cursor' in locals():
+        cursor.close()
+    if 'conn' in locals():
+        conn.close()
