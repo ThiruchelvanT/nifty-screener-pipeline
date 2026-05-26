@@ -1,0 +1,45 @@
+name: Nifty Silver Layer Transformation
+
+# 1. Triggers
+on:
+  workflow_dispatch: # Allows you to click a "Run" button manually on GitHub
+  schedule:
+    # Runs at 11:00 AM UTC (4:30 PM IST) Monday-Friday
+    - cron: '0 11 * * 1-5' 
+
+jobs:
+  run-pyspark-job:
+    # We use Ubuntu, dodging all Mac M1/Intel architectural issues
+    runs-on: ubuntu-latest 
+
+    steps:
+      - name: 🛎️ Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: ☕ Set up Java 17 (Required for PySpark)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🐍 Set up Python 3.11 (The Golden Standard)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 📥 Download Postgres JDBC Driver
+        run: |
+          mkdir -p jars
+          wget https://jdbc.postgresql.org/download/postgresql-42.7.4.jar -O jars/postgresql-42.7.4.jar
+
+      - name: 📦 Install Data Engineering Stack
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyspark "numpy==1.26.4" "pandas==2.1.4" "numba==0.58.1" pandas-ta psycopg2-binary
+
+      - name: ⚙️ Execute Silver Layer Transformation
+        env:
+          # This pulls your password securely from GitHub Secrets
+          NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
+        run: |
+          python spark_silver_layer.py
