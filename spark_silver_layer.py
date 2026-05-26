@@ -119,6 +119,7 @@ silver_schema = """
 # 4. Transformation Logic (Corrected for applyInPandas)
 def process_partition(pdf):
     # 'pdf' is now a single Pandas DataFrame containing one ticker's timeframe data
+    import pandas_ta as ta
     pdf = pdf.sort_values('datetime')
     
     # MACD
