@@ -112,6 +112,27 @@ else:
     # 5. MAIN UI & QUANTITATIVE ENGINE
     # ==========================================
     st.title("⚖️ The Market Oracle")
+
+    # Calculate Percentages
+    total = len(df)
+    if total > 0:
+        macd_bulls = (len(df[df['trend_15m'] == 'BULLISH']) / total) * 100
+        macd_bears = (len(df[df['trend_15m'] == 'BEARISH']) / total) * 100
+        nvi_accum = (len(df[df['smart_money_daily'] == 'ACCUMULATION']) / total) * 100
+        nvi_dist = (len(df[df['smart_money_daily'] == 'DISTRIBUTION']) / total) * 100
+        
+        # Display Progress Bars
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown(f"**Short-Term Momentum (15m MACD)**: {macd_bulls:.1f}% Bullish")
+            st.progress(macd_bulls / 100)
+            
+        with col2:
+            st.markdown(f"**Institutional Flow (Daily NVI)**: {nvi_accum:.1f}% Accumulation")
+            st.progress(nvi_accum / 100)
+            
+    st.divider()
     
     signal_type = st.radio("⚔️ **SIGNAL SELECTION:**", ["BUY (The Rebound)", "SELL (The Collapse)"], horizontal=True)
 
