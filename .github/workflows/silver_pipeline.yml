@@ -1,11 +1,12 @@
-name: Nifty Silver Layer Transformation
+name: ⚙️ Nifty Silver Layer Transformation
 
-# 1. Triggers
 on:
-  workflow_dispatch: # Allows you to click a "Run" button manually on GitHub
+  workflow_dispatch: # Keeps your manual run button
   schedule:
-    # Runs at 11:00 AM UTC (4:30 PM IST) Monday-Friday
-    - cron: '0 11 * * 1-5' 
+    # This CRON runs every 15 minutes from 03:45 UTC to 10:00 UTC 
+    # (Which perfectly matches 09:15 IST to 15:30 IST)
+    # on Monday through Friday
+    - cron: '*/15 3-10 * * 1-5'
 
 jobs:
   run-pyspark-job:
