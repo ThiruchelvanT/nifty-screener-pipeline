@@ -3,10 +3,11 @@ import pandas as pd
 import yfinance as yf
 import psycopg2
 
-# 1. Page Configuration
+# ==========================================
+# 1. PAGE CONFIGURATION & STYLING
+# ==========================================
 st.set_page_config(page_title="The Oracle: Global Intelligence", page_icon="⚖️", layout="wide")
 
-# Custom Styling
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
@@ -14,7 +15,9 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 2. Global Index Fetcher
+# ==========================================
+# 2. GLOBAL SENTINEL (Market Health)
+# ==========================================
 @st.cache_data(ttl=300) 
 def get_global_indices():
     indices = {
@@ -35,51 +38,47 @@ def get_global_indices():
             continue
     return data
 
-# 3. Database Fetchers
-@st.cache_data(ttl=3600)
+# ==========================================
+# 3. SECURE VAULT CONNECTION (The Gold Layer)
+# ==========================================
+@st.cache_data(ttl=900) # Caches for 15 minutes to match our GitHub CRON
 def load_data():
     try:
         conn = psycopg2.connect(
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
+        
+        # Querying the NEW Materialized View
         query = """
-        SELECT ticker AS "Ticker", price AS "1D_Price", stoch_k AS "1D_Stoch_K_Black",
-               macd_black AS "15m_MACD_Black", macd_red AS "15m_MACD_Red",
-               nvi_black AS "1D_NVI_Black", nvi_red AS "1D_NVI_Red", trade_date AS "Date"
-        FROM nifty_daily_signals
-        WHERE trade_date = (SELECT MAX(trade_date) FROM nifty_daily_signals);
+        SELECT 
+            ticker,
+            latest_close,
+            stochrsi_15m,
+            trend_15m,
+            smart_money_daily,
+            last_updated
+        FROM gold_screener_latest;
         """
         df = pd.read_sql_query(query, conn)
         conn.close() 
         
         if df.empty: return None, None
         
-        latest_date = df['Date'].iloc[0]
-        if not isinstance(latest_date, str): latest_date = latest_date.strftime('%Y-%m-%d')
+        latest_date = df['last_updated'].max()
+        if not isinstance(latest_date, str): 
+            latest_date = latest_date.strftime('%Y-%m-%d %H:%M')
+            
         return df, f"Cloud Vault - {latest_date}"
     except Exception as e:
         st.error(f"Failed to breach the Cloud Vault: {e}")
         return None, None
 
-def load_audit_kpis():
-    try:
-        conn = psycopg2.connect(
-            host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
-            user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
-        )
-        query = "SELECT is_accurate FROM signal_audit WHERE is_accurate IS NOT NULL"
-        df_audit = pd.read_sql_query(query, conn)
-        conn.close()
-        return df_audit
-    except Exception as e:
-        print(f"Audit Load Error: {e}")
-        return pd.DataFrame()
-
-# Execute Loads
+# ==========================================
+# 4. EXECUTE LOADS & VALIDATE
+# ==========================================
 data_result = load_data()
 global_data = get_global_indices()
-audit_df = load_audit_kpis()
 
 if data_result[0] is None:
     st.error("🚨 **CRITICAL ALERT:** The Oracle has lost connection to the Neon Cloud Vault.")
@@ -95,9 +94,10 @@ else:
         st.cache_data.clear()
         st.rerun()
     
-    nifty_proxy = df[df['Ticker'] == 'RELIANCE.NS'].iloc[0] if 'RELIANCE.NS' in df['Ticker'].values else None
+    # Check Nifty proxy health using the new smart_money_daily column
+    nifty_proxy = df[df['ticker'] == 'RELIANCE.NS'].iloc[0] if 'RELIANCE.NS' in df['ticker'].values else None
     if nifty_proxy is not None:
-        market_bullish = nifty_proxy['1D_NVI_Black'] > nifty_proxy['1D_NVI_Red']
+        market_bullish = (nifty_proxy['smart_money_daily'] == 'ACCUMULATION')
         st.sidebar.metric("Nifty Health Proxy", "✅ STABLE" if market_bullish else "⚠️ WEAK")
     else:
         market_bullish = True
@@ -108,48 +108,33 @@ else:
     for index in global_data:
         st.sidebar.metric(label=index['Name'], value=f"{index['Price']:,.2f}", delta=f"{index['Change']:.2f}%")
 
-    # --- MAIN UI ---
-    
-    # --- PHASE 3: ACCURACY AUDIT DASHBOARD ---
-    if not audit_df.empty:
-        total_audited = len(audit_df)
-        accuracy_rate = (audit_df['is_accurate'].sum() / total_audited) * 100
-        
-        kpi1, kpi2, kpi3 = st.columns(3)
-        with kpi1:
-            st.metric("System Accuracy", f"{accuracy_rate:.1f}%", help="Calculated based on next-day price movement.")
-        with kpi2:
-            st.metric("Signals Audited", total_audited)
-        with kpi3:
-            last_result = "✅ WIN" if audit_df['is_accurate'].iloc[-1] else "❌ LOSS"
-            st.metric("Last Audit", last_result)
-        
-        st.divider()
-
+    # ==========================================
+    # 5. MAIN UI & QUANTITATIVE ENGINE
+    # ==========================================
     st.title("⚖️ The Market Oracle")
     
     signal_type = st.radio("⚔️ **SIGNAL SELECTION:**", ["BUY (The Rebound)", "SELL (The Collapse)"], horizontal=True)
 
-    # --- MATH ENGINE ---
+    # --- MATH ENGINE (Updated to match Gold Layer logic) ---
     bullish_mask = (
-        (df['1D_Stoch_K_Black'] < 40) & 
-        (df['15m_MACD_Black'] > df['15m_MACD_Red']) &
-        (df['1D_NVI_Black'] > df['1D_NVI_Red'])
+        (df['stochrsi_15m'] < 40) & 
+        (df['trend_15m'] == 'BULLISH') &
+        (df['smart_money_daily'] == 'ACCUMULATION')
     )
     
     bearish_mask = (
-        (df['1D_Stoch_K_Black'] > 75) & 
-        (df['15m_MACD_Black'] < df['15m_MACD_Red']) &
-        (df['1D_NVI_Black'] < df['1D_NVI_Red'])
+        (df['stochrsi_15m'] > 75) & 
+        (df['trend_15m'] == 'BEARISH') &
+        (df['smart_money_daily'] == 'DISTRIBUTION')
     )
 
     if "BUY" in signal_type:
         st.subheader("🔥 THE ELITE BULLS")
-        top_10 = df[bullish_mask].sort_values(by='1D_Stoch_K_Black', ascending=True).head(10)
+        top_10 = df[bullish_mask].sort_values(by='stochrsi_15m', ascending=True).head(10)
         color, verdict = "green", "REBOUND"
     else:
         st.subheader("💀 THE FALLEN")
-        top_10 = df[bearish_mask].sort_values(by='1D_Stoch_K_Black', ascending=False).head(10)
+        top_10 = df[bearish_mask].sort_values(by='stochrsi_15m', ascending=False).head(10)
         color, verdict = "red", "COLLAPSE"
 
     # --- SIGNAL DISPLAY ---
@@ -157,9 +142,14 @@ else:
         cols = st.columns(5)
         for idx, (i, row) in enumerate(top_10.iterrows()):
             with cols[idx % 5]:
-                st.metric(label=row['Ticker'], value=f"₹{row['1D_Price']}", delta=verdict, delta_color="normal" if color=="green" else "inverse")
+                st.metric(label=row['ticker'], value=f"₹{row['latest_close']}", delta=verdict, delta_color="normal" if color=="green" else "inverse")
         st.divider()
-        st.dataframe(top_10[['Ticker', '1D_Price', '1D_Stoch_K_Black', '1D_NVI_Black', '15m_MACD_Black']], use_container_width=True)
+        
+        # Display the formatted dataframe
+        st.dataframe(
+            top_10[['ticker', 'latest_close', 'stochrsi_15m', 'smart_money_daily', 'trend_15m']], 
+            use_container_width=True
+        )
     else:
         st.error("### 🚫 THE COUNCIL REMAINS SILENT: NO TRADE ZONE")
         st.markdown("""
@@ -179,7 +169,7 @@ else:
     st.divider()
     st.header("📁 The Full Data Vault")
     search_query = st.text_input("🔍 Search Stock Symbol (e.g., TATA, HDFC)", "").upper()
-    vault_df = df[df['Ticker'].str.contains(search_query)] if search_query else df
+    vault_df = df[df['ticker'].str.contains(search_query)] if search_query else df
     st.dataframe(vault_df, use_container_width=True, height=400)
 
     st.caption(f"Last Vault Update: {filename}")
