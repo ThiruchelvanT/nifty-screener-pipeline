@@ -63,6 +63,7 @@ def load_gold_data():
         return None, None
 
 @st.cache_data(ttl=900)
+@st.cache_data(ttl=900)
 def load_silver_history(ticker, timeframe):
     """Pulls time-series data directly from the Silver Layer for charting"""
     try:
@@ -71,15 +72,24 @@ def load_silver_history(ticker, timeframe):
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
         
-        # We pull 500 rows to ensure we have enough data even after stripping duplicates
+        # --- THE TIMESTAMP DRIFT FIX ---
+        # If looking at macro 1D, deduplicate by the pure calendar date (ignoring hours/mins).
+        # Otherwise, deduplicate by the exact precise datetime.
+        if timeframe == '1d':
+            distinct_col = "datetime::date"
+        else:
+            distinct_col = "datetime"
+
+        # The ORDER BY must perfectly match the DISTINCT ON clause for Postgres to execute it.
         query = f"""
-        SELECT datetime, close, macd_black, macd_red, 
+        SELECT DISTINCT ON ({distinct_col}) 
+               datetime, close, macd_black, macd_red, 
                rsi_2, stochrsi_k, rsi_14, 
                nvi_black, nvi_red
         FROM silver_technical_indicators
         WHERE ticker = '{ticker}' AND LOWER(timeframe) = '{timeframe}'
-        ORDER BY datetime DESC
-        LIMIT 500;
+        ORDER BY {distinct_col} DESC, datetime DESC
+        LIMIT 150;
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
@@ -87,14 +97,7 @@ def load_silver_history(ticker, timeframe):
         if df.empty:
             return df
             
-        # --- THE DEDUPLICATION SHIELD ---
-        # 1. Drop any rows that have the exact same datetime, keeping only the most recent calculation
-        df = df.drop_duplicates(subset=['datetime'], keep='first')
-        
-        # 2. Slice it down to the exact 150 unique candles we need for a clean chart
-        df = df.head(150)
-        
-        # 3. Sort chronologically (oldest to newest) so Plotly draws the lines perfectly forward
+        # Sort chronologically (oldest to newest) so Plotly draws the lines perfectly forward
         return df.sort_values(by="datetime", ascending=True)
         
     except Exception as e:
