@@ -196,7 +196,14 @@ with tab2:
         chart_df = load_silver_history(target_ticker)
         
         if not chart_df.empty:
-            # Create a 4-row Plotly chart (Price, MACD, RSI, NVI)
+            # --- ON-THE-FLY MATH ---
+            # Calculate the MACD Histogram (MACD Line - Signal Line)
+            chart_df['macd_hist'] = chart_df['macd_black'] - chart_df['macd_red']
+            
+            # Create a color array for the histogram (Green for positive, Red for negative)
+            hist_colors = ['#26A69A' if val >= 0 else '#EF5350' for val in chart_df['macd_hist']]
+
+            # Create a 4-row Plotly chart
             fig = make_subplots(
                 rows=4, cols=1, shared_xaxes=True, 
                 vertical_spacing=0.05,
@@ -207,13 +214,13 @@ with tab2:
             # Row 1: Price
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['close'], name='Close Price', line=dict(color='white')), row=1, col=1)
             
-            # Row 2: MACD
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_black'], name='MACD Line', line=dict(color='#00F5FF')), row=2, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_red'], name='Signal Line', line=dict(color='#FF3030')), row=2, col=1)
+            # Row 2: MACD (Adding the Histogram First so lines draw over it)
+            fig.add_trace(go.Bar(x=chart_df['datetime'], y=chart_df['macd_hist'], name='Histogram', marker_color=hist_colors), row=2, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_black'], name='MACD Line', line=dict(color='white')), row=2, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_red'], name='Signal Line', line=dict(color='red')), row=2, col=1)
             
             # Row 3: RSI
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_14'], name='RSI(14)', line=dict(color='#FFA500')), row=3, col=1)
-            # Add overbought/oversold boundaries
             fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
             fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1)
 
@@ -221,8 +228,7 @@ with tab2:
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['nvi_black'], name='NVI Raw', line=dict(color='gray')), row=4, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['nvi_red'], name='NVI EMA(255)', line=dict(color='red')), row=4, col=1)
 
-            # Layout tuning for dark mode dashboard
-            # Layout tuning for dark mode dashboard
+            # --- STRICT LAYOUT LOCKS ---
             fig.update_layout(
                 height=800, 
                 template="plotly_dark",
@@ -230,28 +236,29 @@ with tab2:
                 plot_bgcolor='rgba(0,0,0,0)',
                 showlegend=False,
                 margin=dict(l=0, r=0, t=30, b=0),
-                dragmode='pan', # Sets the default mouse interaction to dragging/panning (left/right)
+                dragmode='pan', # Set interaction to pan
                 
-                # Configure the X-Axis with your requested time filters
+                # Interactive X-Axis with time buttons
                 xaxis=dict(
                     rangeselector=dict(
                         buttons=list([
-                            dict(count=7, label="Daily (1W)", step="day", stepmode="backward"),
-                            dict(count=1, label="Weekly (1M)", step="month", stepmode="backward"),
-                            dict(count=1, label="Monthly (1Y)", step="year", stepmode="backward"),
-                            dict(count=2, label="Yearly (2Y)", step="year", stepmode="backward"),
-                            dict(step="all", label="All Data")
+                            dict(count=7, label="1W", step="day", stepmode="backward"),
+                            dict(count=1, label="1M", step="month", stepmode="backward"),
+                            dict(count=1, label="1Y", step="year", stepmode="backward"),
+                            dict(count=2, label="2Y", step="year", stepmode="backward"),
+                            dict(step="all", label="All")
                         ]),
-                        bgcolor="#161b22",       # Matches your Streamlit metric background
-                        activecolor="#30363d",   # Highlights the clicked button
-                        font=dict(color="white") # Ensures text is readable
+                        bgcolor="#161b22", activecolor="#30363d", font=dict(color="white")
                     ),
                     type="date"
                 )
             )
 
-            # Render the chart with scrollZoom explicitly disabled
+            # CRITICAL: Lock all Y-Axes to prevent vertical dragging/zooming
+            fig.update_yaxes(fixedrange=True)
+
+            # Render the chart with strict configuration
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False})
-            
         else:
             st.warning("Historical data is still warming up for this asset.")
+
