@@ -3,14 +3,13 @@ name: ⚙️ Nifty Silver Layer Transformation
 on:
   workflow_dispatch: # Keeps your manual run button
   schedule:
-    # This CRON runs every 15 minutes from 03:45 UTC to 10:00 UTC 
-    # (Which perfectly matches 09:15 IST to 15:30 IST)
-    # on Monday through Friday
-    - cron: '30 10 * * 1-5'
+    # Runs every 15 minutes between 04:00 UTC and 10:59 UTC
+    # (Covers the NSE trading window of 09:15 IST to 15:30 IST)
+    # Monday through Friday
+    - cron: '*/15 4-10 * * 1-5'
 
 jobs:
   run-pyspark-job:
-    # We use Ubuntu, dodging all Mac M1/Intel architectural issues
     runs-on: ubuntu-latest 
 
     steps:
@@ -23,7 +22,7 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 🐍 Set up Python 3.11 (The Golden Standard)
+      - name: 🐍 Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -36,12 +35,16 @@ jobs:
       - name: 📦 Install Data Engineering Stack
         run: |
           python -m pip install --upgrade pip
-          pip install "pyspark==3.5.1" "numpy==1.26.4" "pandas==2.1.4" "numba==0.58.1" "pyarrow==14.0.1" psycopg2-binary
+          # ⚠️ ADDED: yfinance, sqlalchemy, requests to support the Bronze ingestion script
+          pip install "pyspark==3.5.1" "numpy==1.26.4" "pandas==2.1.4" "numba==0.58.1" "pyarrow==14.0.1" psycopg2-binary yfinance sqlalchemy requests
           pip install git+https://github.com/MerlinR/Pandas-ta-fork.git
+
+      - name: 📥 Run Bronze Ingestion (Fetch Live Data)
+        env:
+          NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
+        run: python bronze_ingestion.py
           
       - name: ⚙️ Execute Silver Layer Transformation
         env:
-          # This pulls your password securely from GitHub Secrets
           NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
-        run: |
-          python spark_silver_layer.py
+        run: python spark_silver_layer.py
