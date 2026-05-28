@@ -161,6 +161,24 @@ with tab1:
     else:
         st.error("### 🚫 THE COUNCIL REMAINS SILENT: NO TRADE ZONE")
 
+    # --- THE FULL DATA VAULT ---
+    st.divider()
+    st.subheader("📁 The Full Data Vault")
+    st.markdown("Manually search the master ledger for specific stock alignments.")
+    
+    # Search Bar
+    search_query = st.text_input("🔍 Search Stock Symbol (e.g., RELIANCE, HDFC)", "").upper()
+    
+    # Filter the dataframe based on search
+    vault_df = df[df['ticker'].str.contains(search_query, na=False)] if search_query else df
+    
+    # Display the full, scrollable dataframe
+    st.dataframe(
+        vault_df[['ticker', 'latest_close', 'stochrsi_15m', 'smart_money_daily', 'trend_15m']], 
+        use_container_width=True, 
+        height=400
+    )
+
     st.divider()
     st.caption(f"Last Vault Update: {filename}")
 
