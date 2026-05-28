@@ -63,20 +63,20 @@ def load_gold_data():
         return None, None
 
 @st.cache_data(ttl=900)
-def load_silver_history(ticker):
+def load_silver_history(ticker, timeframe):
     """Pulls time-series data directly from the Silver Layer for charting"""
     try:
         conn = psycopg2.connect(
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
-        # ⚠️ WE ARE NOW PULLING EVERY INDICATOR
+        # ⚠️ We inject BOTH the ticker and the specific timeframe into the query
         query = f"""
         SELECT datetime, close, macd_black, macd_red, 
                rsi_2, stochrsi_k, rsi_14, 
                nvi_black, nvi_red
         FROM silver_technical_indicators
-        WHERE ticker = '{ticker}' AND timeframe = '1d'
+        WHERE ticker = '{ticker}' AND LOWER(timeframe) = '{timeframe}'
         ORDER BY datetime DESC
         LIMIT 150;
         """
@@ -185,15 +185,38 @@ with tab1:
 # ------------------------------------------
 # TAB 2: THE X-RAY SANDBOX (Silver Layer)
 # ------------------------------------------
+# ------------------------------------------
+# TAB 2: THE X-RAY SANDBOX (Silver Layer)
+# ------------------------------------------
 with tab2:
     st.subheader("🔬 Institutional Indicator X-Ray")
-    st.markdown("Dive into the raw mathematical momentum and accumulation of a specific asset.")
+    st.markdown("Dive into the raw mathematical momentum and accumulation of a specific asset across multiple timeframes.")
     
-    # Dropdown to select a ticker from the available Gold data
-    target_ticker = st.selectbox("Select Asset to Analyze:", df['ticker'].sort_values().unique())
+    # ⚠️ Create columns for a clean top-bar layout
+    ctrl_col1, ctrl_col2 = st.columns([2, 1])
+    
+    with ctrl_col1:
+        target_ticker = st.selectbox("Select Asset to Analyze:", df['ticker'].sort_values().unique())
+        
+    with ctrl_col2:
+        # The Timeframe Switcher
+        selected_tf_label = st.radio(
+            "Lens (Timeframe):", 
+            ["15m (Intraday)", "1h (Swing)", "1d (Macro)"], 
+            horizontal=True
+        )
+    
+    # Map the UI label to the exact string our database expects
+    tf_map = {
+        "15m (Intraday)": "15m",
+        "1h (Swing)": "1h",
+        "1d (Macro)": "1d"
+    }
+    target_timeframe = tf_map[selected_tf_label]
     
     if target_ticker:
-        chart_df = load_silver_history(target_ticker)
+        # Pass BOTH parameters to our updated data loader
+        chart_df = load_silver_history(target_ticker, target_timeframe)
         
         if not chart_df.empty:
             # --- ON-THE-FLY MATH ---
