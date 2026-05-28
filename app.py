@@ -283,10 +283,11 @@ with tab2:
             # ==========================================
             # ROW 2: MACD
             # ==========================================
-            fig.add_trace(go.Bar(x=chart_df['datetime'], y=chart_df['macd_hist'], name='Histogram', marker_color=hist_colors), row=2, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_black'], name='MACD Line', line=dict(color='white')), row=2, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_red'], name='Signal Line', line=dict(color='red')), row=2, col=1)
-            
+            # ==========================================
+            # ROW 2: MACD (Lines Only, No Histogram)
+            # ==========================================
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_black'], name='MACD Line', line=dict(color='white', width=1.5)), row=2, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_red'], name='Signal Line', line=dict(color='red', width=1.5)), row=2, col=1)
             # ==========================================
             # ROW 3: RSI (2)
             # ==========================================
@@ -351,14 +352,16 @@ with tab2:
                 )
 
             # --- STRICT LAYOUT LOCKS ---
+            # --- STRICT LAYOUT LOCKS ---
             fig.update_layout(
-                height=1200, # ⚠️ Increased height to comfortably fit 6 rows
+                height=1200, 
                 template="plotly_dark",
                 paper_bgcolor='rgba(0,0,0,0)', 
                 plot_bgcolor='rgba(0,0,0,0)',
                 showlegend=False,
                 margin=dict(l=0, r=60, t=30, b=0),
                 dragmode='pan',
+                xaxis_rangeslider_visible=False, # ⚠️ This command instantly destroys the sliding mini-chart
                 xaxis=dict(
                     rangeselector=dict(
                         buttons=list([
