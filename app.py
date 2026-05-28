@@ -359,6 +359,24 @@ with tab2:
                 )
             )
             fig.update_yaxes(fixedrange=True)
+            # --- THE TIME-FOLDING FIX (RANGEBREAKS) ---
+            # Dynamically hide non-trading hours so the lines don't stretch unnaturally across time gaps
+            if target_timeframe == '1d':
+                # For Macro Daily charts, we only need to hide the weekends
+                fig.update_xaxes(
+                    rangebreaks=[
+                        dict(bounds=["sat", "mon"]) # Hides Saturday to Monday morning
+                    ]
+                )
+            else:
+                # For Intraday charts (15m, 1h), we hide weekends AND the overnight gaps
+                # The NSE closes at 15:30 (15.5) and opens at 09:15 (9.25)
+                fig.update_xaxes(
+                    rangebreaks=[
+                        dict(bounds=["sat", "mon"]),
+                        dict(bounds=[15.5, 9.25], pattern="hour") 
+                    ]
+                )
 
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False})
         else:
