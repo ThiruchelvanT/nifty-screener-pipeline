@@ -83,7 +83,7 @@ def load_silver_history(ticker, timeframe):
         # The ORDER BY must perfectly match the DISTINCT ON clause for Postgres to execute it.
         query = f"""
         SELECT DISTINCT ON ({distinct_col}) 
-               datetime, close, macd_black, macd_red, 
+               datetime, open, high, low, close, macd_black, macd_red, 
                rsi_2, stochrsi_k, rsi_14, 
                nvi_black, nvi_red
         FROM silver_technical_indicators
@@ -263,8 +263,23 @@ with tab2:
             # ==========================================
             # ROW 1: PRICE
             # ==========================================
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['close'], name='Close Price', line=dict(color='white')), row=1, col=1)
+            # ==========================================
+            # ROW 1: PRICE (Japanese Candlesticks)
+            # ==========================================
+            fig.add_trace(go.Candlestick(
+                x=chart_df['datetime'],
+                open=chart_df['open'],
+                high=chart_df['high'],
+                low=chart_df['low'],
+                close=chart_df['close'],
+                name='Price',
+                increasing_line_color='#26A69A', # TradingView Green
+                decreasing_line_color='#EF5350'  # TradingView Red
+            ), row=1, col=1)
             
+            # Plotly automatically adds a range slider with candlesticks which breaks our subplots. 
+            # We must explicitly turn it off. Add this INSIDE your fig.update_layout() block at the bottom:
+            # xaxis_rangeslider_visible=False,
             # ==========================================
             # ROW 2: MACD
             # ==========================================
