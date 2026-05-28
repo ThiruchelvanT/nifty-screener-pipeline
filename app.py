@@ -70,9 +70,11 @@ def load_silver_history(ticker):
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
-        # ⚠️ ADDED rsi_2 TO THIS QUERY
+        # ⚠️ WE ARE NOW PULLING EVERY INDICATOR
         query = f"""
-        SELECT datetime, close, macd_black, macd_red, rsi_2, rsi_14, nvi_black, nvi_red
+        SELECT datetime, close, macd_black, macd_red, 
+               rsi_2, stochrsi_k, rsi_14, 
+               nvi_black, nvi_red
         FROM silver_technical_indicators
         WHERE ticker = '{ticker}' AND timeframe = '1d'
         ORDER BY datetime DESC
@@ -84,7 +86,6 @@ def load_silver_history(ticker):
     except Exception as e:
         st.error(f"Failed to breach the Silver Vault: {e}")
         return pd.DataFrame()
-
 # ==========================================
 # 3. SIDEBAR (Global Pulse)
 # ==========================================
@@ -196,56 +197,113 @@ with tab2:
         
         if not chart_df.empty:
             # --- ON-THE-FLY MATH ---
-            # Calculate the MACD Histogram (MACD Line - Signal Line)
+            # 1. MACD Histogram
             chart_df['macd_hist'] = chart_df['macd_black'] - chart_df['macd_red']
-            
-            # Create a color array for the histogram (Green for positive, Red for negative)
             hist_colors = ['#26A69A' if val >= 0 else '#EF5350' for val in chart_df['macd_hist']]
+            
+            # 2. RSI(2) Shading Math
+            chart_df['rsi_2_over'] = chart_df['rsi_2'].clip(lower=75)
+            chart_df['rsi_2_under'] = chart_df['rsi_2'].clip(upper=20)
 
-            # Create a 4-row Plotly chart
+            # Create a 6-row Plotly chart
             fig = make_subplots(
-                rows=4, cols=1, shared_xaxes=True, 
-                vertical_spacing=0.05,
-                row_heights=[0.4, 0.2, 0.2, 0.2],
-                subplot_titles=(f"{target_ticker} - Close Price", "MACD (12, 26, 9)", "RSI (14)", "NVI (Institutional Flow)")
+                rows=6, cols=1, shared_xaxes=True, 
+                vertical_spacing=0.03, # Tighter spacing to fit everything
+                row_heights=[0.25, 0.15, 0.15, 0.15, 0.15, 0.15],
+                subplot_titles=(
+                    f"{target_ticker} - Close Price", 
+                    "MACD (12, 26, 9)", 
+                    "RSI (2) - Extreme Mean Reversion", 
+                    "Stochastic RSI", 
+                    "RSI (14) - Structural Trend", 
+                    "NVI - Institutional Flow"
+                )
             )
 
-            # Row 1: Price
+            # ==========================================
+            # ROW 1: PRICE
+            # ==========================================
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['close'], name='Close Price', line=dict(color='white')), row=1, col=1)
             
-            # Row 2: MACD (Adding the Histogram First so lines draw over it)
+            # ==========================================
+            # ROW 2: MACD
+            # ==========================================
             fig.add_trace(go.Bar(x=chart_df['datetime'], y=chart_df['macd_hist'], name='Histogram', marker_color=hist_colors), row=2, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_black'], name='MACD Line', line=dict(color='white')), row=2, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_red'], name='Signal Line', line=dict(color='red')), row=2, col=1)
             
-            # Row 3: RSI
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=[75]*len(chart_df), mode='lines', line=dict(color='rgba(255,255,255,0.2)', width=1), hoverinfo='skip'), row=3, col=1)
-            # 2. Overbought Shading (Fills down to the 75 line)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2_over'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
-            
-            # 3. Base Line for Oversold (Invisible anchor)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=[20]*len(chart_df), mode='lines', line=dict(color='rgba(255,255,255,0.2)', width=1), hoverinfo='skip'), row=3, col=1)
-            # 4. Oversold Shading (Fills up to the 20 line)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2_under'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
-            
-            # 5. The Actual RSI(2) Line (Drawn on top of the shading)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2'], name='RSI(2)', line=dict(color='#FFA500', width=1.5)), row=3, col=1)
             # ==========================================
-            # Row 4: NVI
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['nvi_black'], name='NVI Raw', line=dict(color='gray')), row=4, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['nvi_red'], name='NVI EMA(255)', line=dict(color='red')), row=4, col=1)
+            # ROW 3: RSI (2)
+            # ==========================================
+            # Invisible boundaries and shading
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=[75]*len(chart_df), mode='lines', line=dict(color='rgba(255,255,255,0)', width=0), hoverinfo='skip'), row=3, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2_over'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=[20]*len(chart_df), mode='lines', line=dict(color='rgba(255,255,255,0)', width=0), hoverinfo='skip'), row=3, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2_under'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
+            # The RSI 2 Line
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2'], name='RSI(2)', line=dict(color='#FFA500', width=1.5)), row=3, col=1)
+
+            # ==========================================
+            # ROW 4: STOCHASTIC RSI
+            # ==========================================
+            fig.add_hrect(y0=20, y1=80, fillcolor="rgba(255, 100, 100, 0.1)", layer="below", line_width=0, row=4, col=1)
+            fig.add_hline(y=80, line_width=1, line_color="gray", row=4, col=1)
+            fig.add_hline(y=20, line_width=1, line_color="gray", row=4, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['stochrsi_k'], name='StochRSI', line=dict(color='#0055FF', width=1.5)), row=4, col=1)
+
+            # ==========================================
+            # ROW 5: RSI (14)
+            # ==========================================
+            fig.add_hline(y=70, line_dash="dot", line_color="red", row=5, col=1)
+            fig.add_hline(y=30, line_dash="dot", line_color="green", row=5, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_14'], name='RSI(14)', line=dict(color='#E0E0E0', width=1.5)), row=5, col=1)
+
+            # ==========================================
+            # ROW 6: NVI
+            # ==========================================
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['nvi_black'], name='NVI Raw', line=dict(color='white', width=1.5)), row=6, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['nvi_red'], name='NVI EMA(255)', line=dict(color='#FF3333', width=1.5)), row=6, col=1)
+
+            # --- TRADINGVIEW STYLE VALUE BUBBLES ---
+            last_date = chart_df['datetime'].iloc[-1]
+            
+            # StochRSI Bubble (Row 4)
+            last_stoch = chart_df['stochrsi_k'].iloc[-1]
+            if pd.notna(last_stoch):
+                fig.add_annotation(
+                    x=last_date, y=last_stoch, text=f"<b>{last_stoch:.2f}</b>",
+                    showarrow=False, xanchor='left', xshift=10,
+                    bgcolor="#0055FF", font=dict(color="white", size=11),
+                    borderpad=3, bordercolor="white", borderwidth=1, row=4, col=1
+                )
+
+            # NVI Bubbles (Row 6)
+            last_nvi_black = chart_df['nvi_black'].iloc[-1]
+            last_nvi_red = chart_df['nvi_red'].iloc[-1]
+            if pd.notna(last_nvi_black):
+                fig.add_annotation(
+                    x=last_date, y=last_nvi_black, text=f"<b>{last_nvi_black:.2f}</b>",
+                    showarrow=False, xanchor='left', xshift=10,
+                    bgcolor="white", font=dict(color="black", size=11),
+                    borderpad=3, bordercolor="black", borderwidth=1, row=6, col=1
+                )
+            if pd.notna(last_nvi_red):
+                fig.add_annotation(
+                    x=last_date, y=last_nvi_red, text=f"<b>{last_nvi_red:.2f}</b>",
+                    showarrow=False, xanchor='left', xshift=10,
+                    bgcolor="#FF3333", font=dict(color="white", size=11),
+                    borderpad=3, bordercolor="white", borderwidth=1, row=6, col=1
+                )
 
             # --- STRICT LAYOUT LOCKS ---
             fig.update_layout(
-                height=800, 
+                height=1200, # ⚠️ Increased height to comfortably fit 6 rows
                 template="plotly_dark",
                 paper_bgcolor='rgba(0,0,0,0)', 
                 plot_bgcolor='rgba(0,0,0,0)',
                 showlegend=False,
-                margin=dict(l=0, r=0, t=30, b=0),
-                dragmode='pan', # Set interaction to pan
-                
-                # Interactive X-Axis with time buttons
+                margin=dict(l=0, r=60, t=30, b=0),
+                dragmode='pan',
                 xaxis=dict(
                     rangeselector=dict(
                         buttons=list([
@@ -260,12 +318,9 @@ with tab2:
                     type="date"
                 )
             )
-
-            # CRITICAL: Lock all Y-Axes to prevent vertical dragging/zooming
             fig.update_yaxes(fixedrange=True)
 
-            # Render the chart with strict configuration
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False})
         else:
             st.warning("Historical data is still warming up for this asset.")
-
+            
