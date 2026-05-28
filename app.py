@@ -222,15 +222,36 @@ with tab2:
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['nvi_red'], name='NVI EMA(255)', line=dict(color='red')), row=4, col=1)
 
             # Layout tuning for dark mode dashboard
+            # Layout tuning for dark mode dashboard
             fig.update_layout(
                 height=800, 
                 template="plotly_dark",
                 paper_bgcolor='rgba(0,0,0,0)', 
                 plot_bgcolor='rgba(0,0,0,0)',
                 showlegend=False,
-                margin=dict(l=0, r=0, t=30, b=0)
+                margin=dict(l=0, r=0, t=30, b=0),
+                dragmode='pan', # Sets the default mouse interaction to dragging/panning (left/right)
+                
+                # Configure the X-Axis with your requested time filters
+                xaxis=dict(
+                    rangeselector=dict(
+                        buttons=list([
+                            dict(count=7, label="Daily (1W)", step="day", stepmode="backward"),
+                            dict(count=1, label="Weekly (1M)", step="month", stepmode="backward"),
+                            dict(count=1, label="Monthly (1Y)", step="year", stepmode="backward"),
+                            dict(count=2, label="Yearly (2Y)", step="year", stepmode="backward"),
+                            dict(step="all", label="All Data")
+                        ]),
+                        bgcolor="#161b22",       # Matches your Streamlit metric background
+                        activecolor="#30363d",   # Highlights the clicked button
+                        font=dict(color="white") # Ensures text is readable
+                    ),
+                    type="date"
+                )
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            # Render the chart with scrollZoom explicitly disabled
+            st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False})
+            
         else:
             st.warning("Historical data is still warming up for this asset.")
