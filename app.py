@@ -70,9 +70,9 @@ def load_silver_history(ticker):
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
-        # Pull the last 150 daily candles for the requested ticker
+        # ⚠️ ADDED rsi_2 TO THIS QUERY
         query = f"""
-        SELECT datetime, close, macd_black, macd_red, rsi_14, nvi_black, nvi_red
+        SELECT datetime, close, macd_black, macd_red, rsi_2, rsi_14, nvi_black, nvi_red
         FROM silver_technical_indicators
         WHERE ticker = '{ticker}' AND timeframe = '1d'
         ORDER BY datetime DESC
@@ -80,7 +80,6 @@ def load_silver_history(ticker):
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
-        # Reverse the dataframe so oldest dates are first (for proper charting)
         return df.sort_values(by="datetime")
     except Exception as e:
         st.error(f"Failed to breach the Silver Vault: {e}")
@@ -220,10 +219,18 @@ with tab2:
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_red'], name='Signal Line', line=dict(color='red')), row=2, col=1)
             
             # Row 3: RSI
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_14'], name='RSI(14)', line=dict(color='#FFA500')), row=3, col=1)
-            fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
-            fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1)
-
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=[75]*len(chart_df), mode='lines', line=dict(color='rgba(255,255,255,0.2)', width=1), hoverinfo='skip'), row=3, col=1)
+            # 2. Overbought Shading (Fills down to the 75 line)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2_over'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
+            
+            # 3. Base Line for Oversold (Invisible anchor)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=[20]*len(chart_df), mode='lines', line=dict(color='rgba(255,255,255,0.2)', width=1), hoverinfo='skip'), row=3, col=1)
+            # 4. Oversold Shading (Fills up to the 20 line)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2_under'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
+            
+            # 5. The Actual RSI(2) Line (Drawn on top of the shading)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2'], name='RSI(2)', line=dict(color='#FFA500', width=1.5)), row=3, col=1)
+            # ==========================================
             # Row 4: NVI
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['nvi_black'], name='NVI Raw', line=dict(color='gray')), row=4, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['nvi_red'], name='NVI EMA(255)', line=dict(color='red')), row=4, col=1)
