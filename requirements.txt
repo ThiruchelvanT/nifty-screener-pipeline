@@ -6,3 +6,4 @@ openpyxl
 streamlit
 psycopg2-binary
 SQLAlchemy
+plotly
