@@ -70,7 +70,8 @@ def load_silver_history(ticker, timeframe):
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
-        # ⚠️ We inject BOTH the ticker and the specific timeframe into the query
+        
+        # We pull 500 rows to ensure we have enough data even after stripping duplicates
         query = f"""
         SELECT datetime, close, macd_black, macd_red, 
                rsi_2, stochrsi_k, rsi_14, 
@@ -78,11 +79,24 @@ def load_silver_history(ticker, timeframe):
         FROM silver_technical_indicators
         WHERE ticker = '{ticker}' AND LOWER(timeframe) = '{timeframe}'
         ORDER BY datetime DESC
-        LIMIT 150;
+        LIMIT 500;
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
-        return df.sort_values(by="datetime")
+        
+        if df.empty:
+            return df
+            
+        # --- THE DEDUPLICATION SHIELD ---
+        # 1. Drop any rows that have the exact same datetime, keeping only the most recent calculation
+        df = df.drop_duplicates(subset=['datetime'], keep='first')
+        
+        # 2. Slice it down to the exact 150 unique candles we need for a clean chart
+        df = df.head(150)
+        
+        # 3. Sort chronologically (oldest to newest) so Plotly draws the lines perfectly forward
+        return df.sort_values(by="datetime", ascending=True)
+        
     except Exception as e:
         st.error(f"Failed to breach the Silver Vault: {e}")
         return pd.DataFrame()
