@@ -40,57 +40,81 @@ except Exception as e:
     tickers = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ADANIPORTS.NS"]
 
 # ==========================================
-# 3. BULK YAHOO FINANCE FETCHING
+# 3. YAHOO FINANCE FETCHING (ANTI-BAN BATCHING)
 # ==========================================
 print(f"🚀 Starting Bronze Ingestion for {len(tickers)} assets...")
-
-# Define the exact timeframes your Oracle requires
-timeframes = {
-    "15m": "60d", # Max allowed by YF for intraday
-    "1h": "730d", # Max allowed by YF for hourly
-    "1d": "2y"    # Standard macro lookback
-}
-
 master_df = pd.DataFrame()
 
-# We use YF's built-in bulk download feature to avoid IP bans
-for tf_name, period in timeframes.items():
-    print(f"📥 Downloading {tf_name} timeframe...")
-    
-    # Bulk download is faster and less likely to trigger rate limits
-    data = yf.download(tickers, period=period, interval=tf_name, group_by='ticker', threads=True, progress=False)
-    
-    for ticker in tickers:
-        if ticker in data:
-            df = data[ticker].dropna(how='all')
-            if not df.empty:
-                df = df.reset_index()
-                
-                # Standardize Column Names
-                df.columns = [col.lower() for col in df.columns]
-                if 'datetime' not in df.columns:
-                    df = df.rename(columns={'date': 'datetime'})
-                    
-                df['ticker'] = ticker
-                df['timeframe'] = tf_name
-                
-                # Keep only necessary columns
-                try:
-                    df = df[['ticker', 'datetime', 'timeframe', 'open', 'high', 'low', 'close', 'volume']]
-                    master_df = pd.concat([master_df, df], ignore_index=True)
-                except KeyError:
-                    continue
+# --- STEP 3A: THE MACRO PULL (Bulk) ---
+# YF allows bulk daily pulls without triggering massive rate limits
+print("📥 Downloading Macro 1d timeframe (Bulk)...")
+data_1d = yf.download(tickers, period="2y", interval="1d", group_by='ticker', threads=True, progress=False)
 
-# ==========================================
-# 4. LOAD TO BRONZE VAULT
-# ==========================================
+for ticker in tickers:
+    if ticker in data_1d:
+        df = data_1d[ticker].dropna(how='all')
+        if not df.empty:
+            df = df.reset_index()
+            df.columns = [col.lower() for col in df.columns]
+            if 'date' in df.columns: 
+                df = df.rename(columns={'date': 'datetime'})
+            
+            df['ticker'] = ticker
+            df['timeframe'] = '1d'
+            
+            try:
+                df = df[['ticker', 'datetime', 'timeframe', 'open', 'high', 'low', 'close', 'volume']]
+                master_df = pd.concat([master_df, df], ignore_index=True)
+            except KeyError:
+                continue
+
+# --- STEP 3B: THE INTRADAY PULL (Phalanx Formation) ---
+print("📥 Downloading Intraday 15m & 1h timeframes (Batch Mode)...")
+intraday_tfs = {"15m": "60d", "1h": "730d"}
+
+# Break the 500 tickers into manageable batches of 100 to avoid rate limits
+batch_size = 100
+ticker_batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
+
+for tf_name, period in intraday_tfs.items():
+    for i, batch in enumerate(ticker_batches):
+        print(f"   Fetching {tf_name} Batch {i+1}/{len(ticker_batches)}...")
+        try:
+            # Bulk download only the current batch of 100
+            data = yf.download(batch, period=period, interval=tf_name, group_by='ticker', threads=True, progress=False)
+            
+            for ticker in batch:
+                if ticker in data:
+                    df = data[ticker].dropna(how='all')
+                    if not df.empty:
+                        df = df.reset_index()
+                        df.columns = [col.lower() for col in df.columns]
+                        if 'datetime' not in df.columns: 
+                            if 'date' in df.columns:
+                                df = df.rename(columns={'date': 'datetime'})
+                        
+                        df['ticker'] = ticker
+                        df['timeframe'] = tf_name
+                        
+                        try:
+                            df = df[['ticker', 'datetime', 'timeframe', 'open', 'high', 'low', 'close', 'volume']]
+                            master_df = pd.concat([master_df, df], ignore_index=True)
+                        except KeyError:
+                            continue
+            
+            # Anti-ban sleep between massive batches
+            time.sleep(2)
+            
+        except Exception as e:
+            print(f"   ⚠️ Batch {i+1} failed for {tf_name}: {e}")
+
 # ==========================================
 # 4. LOAD TO BRONZE VAULT
 # ==========================================
 if not master_df.empty:
     print("💾 Pushing fresh data into the Bronze Vault...")
     
-    # ⚠️ CHANGED TO "append" TO PROTECT YOUR HISTORICAL LEDGER
+    # ⚠️ "append" PROTECTS YOUR HISTORICAL LEDGER
     master_df.to_sql("bronze_raw_ohlcv", engine, if_exists="append", index=False)
     
     print("✅ Bronze Ingestion Complete!")
