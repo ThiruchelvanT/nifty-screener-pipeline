@@ -1,10 +1,11 @@
 import os
 import pandas as pd
 import yfinance as yf
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 import requests
 import io
 import time
+
 
 # ==========================================
 # 1. SETUP AND SECURE CREDENTIALS
@@ -109,14 +110,26 @@ for tf_name, period in intraday_tfs.items():
             print(f"   ⚠️ Batch {i+1} failed for {tf_name}: {e}")
 
 # ==========================================
-# 4. LOAD TO BRONZE VAULT
+# 4. LOAD TO BRONZE VAULT (THE UPSERT ARCHITECTURE)
 # ==========================================
 if not master_df.empty:
-    print("💾 Pushing fresh data into the Bronze Vault...")
+    print("💾 Pushing fresh data into the Staging Area...")
     
-    # ⚠️ "append" PROTECTS YOUR HISTORICAL LEDGER
-    master_df.to_sql("bronze_raw_ohlcv", engine, if_exists="append", index=False)
+    # 1. Dump everything into a temporary staging table (overwriting it every time)
+    master_df.to_sql("bronze_staging", engine, if_exists="replace", index=False)
     
-    print("✅ Bronze Ingestion Complete!")
+    print("🔄 Executing Postgres Upsert to merge history...")
+    # 2. The Bouncer: Insert only new rows, silently ignore exact duplicates
+    upsert_query = text("""
+        INSERT INTO bronze_raw_ohlcv (ticker, datetime, timeframe, open, high, low, close, volume)
+        SELECT ticker, datetime, timeframe, open, high, low, close, volume FROM bronze_staging
+        ON CONFLICT (ticker, timeframe, datetime) DO NOTHING;
+    """)
+    
+    # Execute the raw SQL transaction
+    with engine.begin() as conn:
+        conn.execute(upsert_query)
+        
+    print("✅ Bronze Ingestion Complete! Overlapping history safely bypassed.")
 else:
     print("⚠️ FATAL: No data was fetched across any timeframes.")
