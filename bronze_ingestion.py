@@ -112,24 +112,38 @@ for tf_name, period in intraday_tfs.items():
 # ==========================================
 # 4. LOAD TO BRONZE VAULT (THE UPSERT ARCHITECTURE)
 # ==========================================
+# ==========================================
+# 4. LOAD TO BRONZE VAULT (DELTA LOAD ARCHITECTURE)
+# ==========================================
 if not master_df.empty:
-    print("💾 Pushing fresh data into the Staging Area...")
+    print(f"📊 Downloaded {len(master_df)} raw rows. Calculating Delta...")
     
-    # 1. Dump everything into a temporary staging table (overwriting it every time)
-    master_df.to_sql("bronze_staging", engine, if_exists="replace", index=False)
-    
-    print("🔄 Executing Postgres Upsert to merge history...")
-    # 2. The Bouncer: Insert only new rows, silently ignore exact duplicates
-    upsert_query = text("""
-        INSERT INTO bronze_raw_ohlcv (ticker, datetime, timeframe, open, high, low, close, volume)
-        SELECT ticker, datetime, timeframe, open, high, low, close, volume FROM bronze_staging
-        ON CONFLICT (ticker, timeframe, datetime) DO NOTHING;
-    """)
-    
-    # Execute the raw SQL transaction
-    with engine.begin() as conn:
-        conn.execute(upsert_query)
+    try:
+        # 1. Ask the Database for the most recent timestamps it already has
+        latest_dates_query = "SELECT ticker, timeframe, MAX(datetime) as max_date FROM bronze_raw_ohlcv GROUP BY ticker, timeframe"
+        latest_dates = pd.read_sql(latest_dates_query, engine)
         
-    print("✅ Bronze Ingestion Complete! Overlapping history safely bypassed.")
+        if not latest_dates.empty:
+            # Standardize timezones so Pandas can compare them flawlessly
+            master_df['datetime'] = pd.to_datetime(master_df['datetime'], utc=True)
+            latest_dates['max_date'] = pd.to_datetime(latest_dates['max_date'], utc=True)
+            
+            # 2. Merge the database memory with the downloaded data
+            master_df = master_df.merge(latest_dates, on=['ticker', 'timeframe'], how='left')
+            
+            # 3. THE FILTER: Keep ONLY rows that are newer than the database's max_date
+            master_df = master_df[(master_df['datetime'] > master_df['max_date']) | (master_df['max_date'].isnull())]
+            master_df = master_df.drop(columns=['max_date'])
+            
+    except Exception as e:
+        print(f"⚠️ Delta check bypassed (maybe table doesn't exist yet). Proceeding with all rows. Error: {e}")
+
+    # 4. Push only the tiny fraction of new rows
+    if not master_df.empty:
+        print(f"💾 Pushing {len(master_df)} NEW rows into the Bronze Vault...")
+        master_df.to_sql("bronze_raw_ohlcv", engine, if_exists="append", index=False)
+        print("✅ Bronze Delta Ingestion Complete!")
+    else:
+        print("✅ Vault is perfectly up to date. No new rows needed.")
 else:
     print("⚠️ FATAL: No data was fetched across any timeframes.")
