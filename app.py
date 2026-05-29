@@ -366,7 +366,8 @@ with tab2:
                     # ⚠️ The 'rangeselector' block (1W, 1M, 1Y) has been completely eradicated
                 )
             )
-            fig.update_yaxes(fixedrange=True)
+            # Unlocks the Y-axis so you can vertically zoom in on flat cumulative indicators like NVI
+            fig.update_yaxes(fixedrange=False, autorange=True)
             
             # --- THE TIME-FOLDING FIX (RANGEBREAKS) ---
             # By converting to IST above, this 09:15 to 15:30 rangebreak logic will now work flawlessly!
