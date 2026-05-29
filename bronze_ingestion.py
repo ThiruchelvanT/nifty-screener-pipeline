@@ -84,11 +84,15 @@ for tf_name, period in timeframes.items():
 # ==========================================
 # 4. LOAD TO BRONZE VAULT
 # ==========================================
+# ==========================================
+# 4. LOAD TO BRONZE VAULT
+# ==========================================
 if not master_df.empty:
     print("💾 Pushing fresh data into the Bronze Vault...")
-    # if_exists="replace" prevents the massive duplicate bloat issue. 
-    # It wipes the slate clean and loads the perfect, rolling 60-day window.
-    master_df.to_sql("bronze_raw_ohlcv", engine, if_exists="replace", index=False)
+    
+    # ⚠️ CHANGED TO "append" TO PROTECT YOUR HISTORICAL LEDGER
+    master_df.to_sql("bronze_raw_ohlcv", engine, if_exists="append", index=False)
+    
     print("✅ Bronze Ingestion Complete!")
 else:
     print("⚠️ FATAL: No data was fetched across any timeframes.")
