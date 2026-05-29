@@ -63,7 +63,6 @@ def load_gold_data():
         return None, None
 
 @st.cache_data(ttl=900)
-@st.cache_data(ttl=900)
 def load_silver_history(ticker, timeframe):
     """Pulls time-series data directly from the Silver Layer for charting"""
     try:
@@ -73,14 +72,11 @@ def load_silver_history(ticker, timeframe):
         )
         
         # --- THE TIMESTAMP DRIFT FIX ---
-        # If looking at macro 1D, deduplicate by the pure calendar date (ignoring hours/mins).
-        # Otherwise, deduplicate by the exact precise datetime.
         if timeframe == '1d':
             distinct_col = "datetime::date"
         else:
             distinct_col = "datetime"
 
-        # The ORDER BY must perfectly match the DISTINCT ON clause for Postgres to execute it.
         query = f"""
         SELECT DISTINCT ON ({distinct_col}) 
                datetime, open, high, low, close, macd_black, macd_red, 
@@ -97,12 +93,26 @@ def load_silver_history(ticker, timeframe):
         if df.empty:
             return df
             
+        # ==========================================
+        # TIMEZONE TRANSLATION (UTC -> IST)
+        # ==========================================
+        # 1. Ensure the column is recognized as a datetime object
+        df['datetime'] = pd.to_datetime(df['datetime'])
+        
+        # 2. If the database stripped the timezone tag, explicitly tell Pandas it is UTC
+        if df['datetime'].dt.tz is None:
+            df['datetime'] = df['datetime'].dt.tz_localize('UTC')
+            
+        # 3. Translate the timestamps to Indian Standard Time for the UI
+        df['datetime'] = df['datetime'].dt.tz_convert('Asia/Kolkata')
+        
         # Sort chronologically (oldest to newest) so Plotly draws the lines perfectly forward
         return df.sort_values(by="datetime", ascending=True)
         
     except Exception as e:
         st.error(f"Failed to breach the Silver Vault: {e}")
         return pd.DataFrame()
+
 # ==========================================
 # 3. SIDEBAR (Global Pulse)
 # ==========================================
@@ -202,9 +212,6 @@ with tab1:
 # ------------------------------------------
 # TAB 2: THE X-RAY SANDBOX (Silver Layer)
 # ------------------------------------------
-# ------------------------------------------
-# TAB 2: THE X-RAY SANDBOX (Silver Layer)
-# ------------------------------------------
 with tab2:
     st.subheader("🔬 Institutional Indicator X-Ray")
     st.markdown("Dive into the raw mathematical momentum and accumulation of a specific asset across multiple timeframes.")
@@ -261,9 +268,6 @@ with tab2:
             )
 
             # ==========================================
-            # ROW 1: PRICE
-            # ==========================================
-            # ==========================================
             # ROW 1: PRICE (Japanese Candlesticks)
             # ==========================================
             fig.add_trace(go.Candlestick(
@@ -277,17 +281,12 @@ with tab2:
                 decreasing_line_color='#EF5350'  # TradingView Red
             ), row=1, col=1)
             
-            # Plotly automatically adds a range slider with candlesticks which breaks our subplots. 
-            # We must explicitly turn it off. Add this INSIDE your fig.update_layout() block at the bottom:
-            # xaxis_rangeslider_visible=False,
-            # ==========================================
-            # ROW 2: MACD
-            # ==========================================
             # ==========================================
             # ROW 2: MACD (Lines Only, No Histogram)
             # ==========================================
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_black'], name='MACD Line', line=dict(color='white', width=1.5)), row=2, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_red'], name='Signal Line', line=dict(color='red', width=1.5)), row=2, col=1)
+            
             # ==========================================
             # ROW 3: RSI (2)
             # ==========================================
@@ -352,7 +351,6 @@ with tab2:
                 )
 
             # --- STRICT LAYOUT LOCKS ---
-            # --- STRICT LAYOUT LOCKS ---
             fig.update_layout(
                 height=1200, 
                 template="plotly_dark",
@@ -361,7 +359,7 @@ with tab2:
                 showlegend=False,
                 margin=dict(l=0, r=60, t=30, b=0),
                 dragmode='pan',
-                xaxis_rangeslider_visible=False, # ⚠️ This command instantly destroys the sliding mini-chart
+                xaxis_rangeslider_visible=False,
                 xaxis=dict(
                     rangeselector=dict(
                         buttons=list([
@@ -377,18 +375,16 @@ with tab2:
                 )
             )
             fig.update_yaxes(fixedrange=True)
+            
             # --- THE TIME-FOLDING FIX (RANGEBREAKS) ---
-            # Dynamically hide non-trading hours so the lines don't stretch unnaturally across time gaps
+            # By converting to IST above, this 09:15 to 15:30 rangebreak logic will now work flawlessly!
             if target_timeframe == '1d':
-                # For Macro Daily charts, we only need to hide the weekends
                 fig.update_xaxes(
                     rangebreaks=[
-                        dict(bounds=["sat", "mon"]) # Hides Saturday to Monday morning
+                        dict(bounds=["sat", "mon"])
                     ]
                 )
             else:
-                # For Intraday charts (15m, 1h), we hide weekends AND the overnight gaps
-                # The NSE closes at 15:30 (15.5) and opens at 09:15 (9.25)
                 fig.update_xaxes(
                     rangebreaks=[
                         dict(bounds=["sat", "mon"]),
@@ -396,7 +392,6 @@ with tab2:
                     ]
                 )
 
-            st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False})
+            st.plotly_chart(fig, use_container_width=True, config={'scrollZoom':False, 'displayModeBar': False})
         else:
             st.warning("Historical data is still warming up for this asset.")
-            
