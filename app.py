@@ -351,6 +351,7 @@ with tab2:
                 )
 
             # --- STRICT LAYOUT LOCKS ---
+            # --- STRICT LAYOUT LOCKS ---
             fig.update_layout(
                 height=1200, 
                 template="plotly_dark",
@@ -361,17 +362,8 @@ with tab2:
                 dragmode='pan',
                 xaxis_rangeslider_visible=False,
                 xaxis=dict(
-                    rangeselector=dict(
-                        buttons=list([
-                            dict(count=7, label="1W", step="day", stepmode="backward"),
-                            dict(count=1, label="1M", step="month", stepmode="backward"),
-                            dict(count=1, label="1Y", step="year", stepmode="backward"),
-                            dict(count=2, label="2Y", step="year", stepmode="backward"),
-                            dict(step="all", label="All")
-                        ]),
-                        bgcolor="#161b22", activecolor="#30363d", font=dict(color="white")
-                    ),
-                    type="date"
+                    type="date" 
+                    # ⚠️ The 'rangeselector' block (1W, 1M, 1Y) has been completely eradicated
                 )
             )
             fig.update_yaxes(fixedrange=True)
