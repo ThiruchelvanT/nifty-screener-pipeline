@@ -31,9 +31,14 @@ except:
 # ==========================================
 # 3. MASSIVE BATCH DOWNLOAD
 # ==========================================
-print(f"🚀 Initiating V2 Backfill for {len(tickers)} assets...")
+# ==========================================
+# 3. MASSIVE BATCH DOWNLOAD (The Storage Diet)
+# ==========================================
+print(f"🚀 Initiating Great Reset for {len(tickers)} assets...")
 master_df = pd.DataFrame()
-timeframes = {"1d": "2y", "1h": "730d", "15m": "60d"}
+
+# ⚠️ REDUCED 1h TO 365 DAYS TO SURVIVE THE 512 MB HARDWARE LIMIT
+timeframes = {"1d": "2y", "1h": "365d", "15m": "60d"}
 
 batch_size = 100
 ticker_batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
@@ -60,17 +65,17 @@ for tf_name, period in timeframes.items():
                             master_df = pd.concat([master_df, df], ignore_index=True)
                         except:
                             continue
-            time.sleep(2) # Anti-ban shield
+            time.sleep(2) 
         except Exception as e:
             continue
 
 # ==========================================
-# 4. LOAD TO THE PARALLEL VAULT (V2)
+# 4. LOAD DIRECTLY TO PRODUCTION VAULT
 # ==========================================
 if not master_df.empty:
-    print(f"💾 Pushing {len(master_df)} rows into the V2 Bronze Vault...")
-    # ⚠️ Notice we are writing to a completely new table!
-    master_df.to_sql("bronze_raw_ohlcv_v2", engine, if_exists="replace", index=False)
-    print("✅ Parallel Foundation Built Successfully!")
+    print(f"💾 Pushing {len(master_df)} rows into the LIVE Bronze Vault...")
+    # Writing straight to production since we truncated it
+    master_df.to_sql("bronze_raw_ohlcv", engine, if_exists="replace", index=False)
+    print("✅ Foundation Rebuilt Successfully!")
 else:
     print("⚠️ FATAL ERROR.")
