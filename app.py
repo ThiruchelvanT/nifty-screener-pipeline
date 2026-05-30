@@ -9,6 +9,31 @@ from plotly.subplots import make_subplots
 # 1. PAGE CONFIGURATION & STYLING
 # ==========================================
 st.set_page_config(page_title="The Oracle: Global Intelligence", page_icon="⚖️", layout="wide")
+st.markdown("### 📡 Institutional Market Breadth")
+
+# Fetch the pre-calculated percentages from your new Gold View
+try:
+    breadth_df = pd.read_sql("SELECT * FROM gold_market_breadth", engine)
+    
+    if not breadth_df.empty:
+        elite_pct = breadth_df['elite_bullish_percentage'].iloc[0]
+        bear_pct = breadth_df['terminal_bearish_percentage'].iloc[0]
+        elite_count = breadth_df['elite_bulls'].iloc[0]
+        
+        # Display as a beautiful 3-column metric row
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric(label="🐂 Elite Bullish %", value=f"{elite_pct}%", delta="Strict Confluence")
+        with col2:
+            st.metric(label="🐻 Terminal Bearish %", value=f"{bear_pct}%", delta="-Avoid", delta_color="inverse")
+        with col3:
+            st.metric(label="🎯 Active Targets", value=f"{elite_count} Stocks", delta="Ready for Screener")
+            
+        st.divider() # Draws a clean line before your main Screener table
+        
+except Exception as e:
+    st.warning(f"Market Breadth Radar offline: {e}")
 
 st.markdown("""
     <style>
