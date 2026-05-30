@@ -5,6 +5,7 @@ import psycopg2
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from sqlalchemy import create_engine
+import os
 
 # ==========================================
 # 1. PAGE CONFIGURATION & STYLING
@@ -13,6 +14,7 @@ st.set_page_config(page_title="The Oracle: Global Intelligence", page_icon="⚖�
 st.markdown("### 📡 Institutional Market Breadth")
 
 # Fetch the pre-calculated percentages from your new Gold View
+db_password = os.getenv("NEON_PASSWORD")
 NEON_HOST = "ep-holy-star-amh8eg8r-pooler.c-5.us-east-1.aws.neon.tech"
 db_url = f"postgresql://neondb_owner:{db_password}@{NEON_HOST}:5432/neondb?sslmode=require"
 engine = create_engine(db_url)
