@@ -4,6 +4,7 @@ import yfinance as yf
 import psycopg2
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from sqlalchemy import create_engine
 
 # ==========================================
 # 1. PAGE CONFIGURATION & STYLING
