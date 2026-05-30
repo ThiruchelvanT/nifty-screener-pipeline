@@ -70,8 +70,9 @@ for ticker in tickers:
                 continue
 
 # --- STEP 3B: THE INTRADAY PULL (Phalanx Formation) ---
-print("📥 Downloading Intraday 15m & 1h timeframes (Batch Mode)...")
-intraday_tfs = {"15m": "60d", "1h": "730d"}
+# ⚠️ THE FIX: 1-Hour timeframe has been permanently removed to protect database storage limits.
+print("📥 Downloading Intraday 15m timeframe (Batch Mode)...")
+intraday_tfs = {"15m": "60d"}
 
 # Break the 500 tickers into manageable batches of 100 to avoid rate limits
 batch_size = 100
@@ -109,9 +110,6 @@ for tf_name, period in intraday_tfs.items():
         except Exception as e:
             print(f"   ⚠️ Batch {i+1} failed for {tf_name}: {e}")
 
-# ==========================================
-# 4. LOAD TO BRONZE VAULT (THE UPSERT ARCHITECTURE)
-# ==========================================
 # ==========================================
 # 4. LOAD TO BRONZE VAULT (DELTA LOAD ARCHITECTURE)
 # ==========================================
