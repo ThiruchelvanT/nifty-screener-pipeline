@@ -61,7 +61,7 @@ def inject_zerodha_timeline(csv_filename, timeframe):
     # -------------------------------
     
     # Now pandas can safely parse it
-    df['datetime'] = pd.to_datetime(df['datetime'])
+    # df['datetime'] = pd.to_datetime(df['datetime'])
     # -------------------------------
 
     df['ticker'] = target_ticker  
