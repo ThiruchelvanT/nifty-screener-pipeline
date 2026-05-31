@@ -31,32 +31,32 @@ def inject_zerodha_timeline(csv_filename, timeframe):
 
     # --- DEFENSIVE DATA CLEANING ---
     print("🧽 Scrubbing CSV headers for hidden spaces and case issues...")
-    # 1. Strip invisible spaces from column names
     df.columns = df.columns.str.strip()
-    # 2. Force all column names to lowercase so we don't worry about 'Date' vs 'date' vs 'DATE'
     df.columns = df.columns.str.lower()
     
-    # 3. Now we safely grab the exact lowercase columns
     try:
         df = df[['date', 'open', 'high', 'low', 'close', 'volume']]
     except KeyError as e:
         print(f"❌ CRITICAL ERROR: The CSV does not have the expected columns. Found: {list(df.columns)}")
         return
 
-    # Rename 'date' to 'datetime' for your PySpark schema
     df = df.rename(columns={'date': 'datetime'})
+
+    # --- DEFENSIVE TIMEZONE PARSING ---
+    print("🕒 Stripping Zerodha timezone text (GMT+0530)...")
+    # This chops off the messy ' GMT+0530 (India Standard Time)' leaving just the raw date and time
+    df['datetime'] = df['datetime'].astype(str).apply(lambda x: x.split(' GMT')[0])
+    
+    # Now pandas can safely parse it
+    df['datetime'] = pd.to_datetime(df['datetime'])
     # -------------------------------
 
-    # Add metadata
-    df['datetime'] = pd.to_datetime(df['datetime'])
     df['ticker'] = target_ticker  
     df['timeframe'] = timeframe 
     df = df[['ticker', 'datetime', 'timeframe', 'open', 'high', 'low', 'close', 'volume']]
 
-    # Calculate the exact surgical cut point
     min_date = df['datetime'].min().strftime('%Y-%m-%d %H:%M:%S')
 
-    # Execute the surgical swap
     try:
         with engine.begin() as connection:
             delete_query = text(f"""
