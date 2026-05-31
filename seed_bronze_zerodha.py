@@ -43,9 +43,22 @@ def inject_zerodha_timeline(csv_filename, timeframe):
     df = df.rename(columns={'date': 'datetime'})
 
     # --- DEFENSIVE TIMEZONE PARSING ---
-    print("🕒 Stripping Zerodha timezone text (GMT+0530)...")
-    # This chops off the messy ' GMT+0530 (India Standard Time)' leaving just the raw date and time
+    # --- DEFENSIVE TIMEZONE PARSING & UTC CONVERSION ---
+    print("🕒 Standardizing to UTC...")
+    # 1. Chop off the messy GMT string if it exists
     df['datetime'] = df['datetime'].astype(str).apply(lambda x: x.split(' GMT')[0])
+    
+    # 2. Convert to Pandas Datetime
+    df['datetime'] = pd.to_datetime(df['datetime'])
+    
+    # 3. THE TRANSLATOR: 
+    # Tell pandas these raw times are Indian Standard Time
+    df['datetime'] = df['datetime'].dt.tz_localize('Asia/Kolkata')
+    # Convert them mathematically to UTC (e.g., 09:15 IST becomes 03:45 UTC)
+    df['datetime'] = df['datetime'].dt.tz_convert('UTC')
+    # Strip the timezone tag so Postgres accepts it as a standard naive timestamp
+    df['datetime'] = df['datetime'].dt.tz_localize(None)
+    # -------------------------------
     
     # Now pandas can safely parse it
     df['datetime'] = pd.to_datetime(df['datetime'])
