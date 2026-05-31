@@ -5,13 +5,10 @@ from sqlalchemy import create_engine, text
 # 1. ESTABLISH VAULT CONNECTION
 print("🔌 Connecting to Neon Vault...")
 
-# The Cloud-Native Authentication Logic
 try:
-    # If running locally via Streamlit
     import streamlit as st
     db_url = os.environ.get("DATABASE_URL") or st.secrets["DATABASE_URL"]
 except ImportError:
-    # If running on GitHub Actions (Streamlit does not exist here)
     db_url = os.environ.get("DATABASE_URL")
 
 if not db_url:
@@ -20,7 +17,7 @@ if not db_url:
 engine = create_engine(db_url)
 target_ticker = 'ADANIPORTS.NS'
 
-# 2. THE INGESTION ENGINE
+# 2. THE DEFENSIVE INGESTION ENGINE
 def inject_zerodha_timeline(csv_filename, timeframe):
     print(f"\n========================================")
     print(f"🚀 INITIALIZING {timeframe.upper()} PIPELINE FOR {csv_filename}")
@@ -29,19 +26,26 @@ def inject_zerodha_timeline(csv_filename, timeframe):
     try:
         df = pd.read_csv(csv_filename)
     except FileNotFoundError:
-        print(f"⚠️ Could not find {csv_filename}. Skipping...")
+        print(f"⚠️ Could not find '{csv_filename}'. Please ensure it is pushed to GitHub with exactly this name!")
         return
 
-    # Strip indicators and rename to PySpark schema
-    df = df[['date', 'Open', 'High', 'Low', 'Close', 'Volume']]
-    df = df.rename(columns={
-        'date': 'datetime',
-        'Open': 'open',
-        'High': 'high',
-        'Low': 'low',
-        'Close': 'close',
-        'Volume': 'volume'
-    })
+    # --- DEFENSIVE DATA CLEANING ---
+    print("🧽 Scrubbing CSV headers for hidden spaces and case issues...")
+    # 1. Strip invisible spaces from column names
+    df.columns = df.columns.str.strip()
+    # 2. Force all column names to lowercase so we don't worry about 'Date' vs 'date' vs 'DATE'
+    df.columns = df.columns.str.lower()
+    
+    # 3. Now we safely grab the exact lowercase columns
+    try:
+        df = df[['date', 'open', 'high', 'low', 'close', 'volume']]
+    except KeyError as e:
+        print(f"❌ CRITICAL ERROR: The CSV does not have the expected columns. Found: {list(df.columns)}")
+        return
+
+    # Rename 'date' to 'datetime' for your PySpark schema
+    df = df.rename(columns={'date': 'datetime'})
+    # -------------------------------
 
     # Add metadata
     df['datetime'] = pd.to_datetime(df['datetime'])
@@ -68,7 +72,7 @@ def inject_zerodha_timeline(csv_filename, timeframe):
             print(f"✅ Injected {len(df)} pristine Zerodha rows into the {timeframe} timeline.")
             
     except Exception as e:
-        print(f"❌ Operation failed for {timeframe}: {e}")
+        print(f"❌ Database Operation failed for {timeframe}: {e}")
 
 # ==========================================
 # 3. EXECUTE THE DUAL INJECTION
