@@ -198,9 +198,14 @@ with tab1:
     st.divider()
     signal_type = st.radio("⚔️ **SIGNAL SELECTION:**", ["BUY (The Rebound)", "SELL (The Collapse)"], horizontal=True)
 
-    bullish_mask = ((df['stochrsi_15m'] < 40) & (df['trend_15m'] == 'BULLISH') & (df['smart_money_daily'] == 'ACCUMULATION'))
-    bearish_mask = ((df['stochrsi_15m'] > 75) & (df['trend_15m'] == 'BEARISH') & (df['smart_money_daily'] == 'DISTRIBUTION'))
+    # 🛑 SENSOR OFFLINE: StochRSI and NVI are temporarily decoupled due to data feed inversion.
+    # bullish_mask = ((df['stochrsi_15m'] < 40) & (df['trend_15m'] == 'BULLISH') & (df['smart_money_daily'] == 'ACCUMULATION'))
+    # bearish_mask = ((df['stochrsi_15m'] > 75) & (df['trend_15m'] == 'BEARISH') & (df['smart_money_daily'] == 'DISTRIBUTION'))
 
+    # 🟢 ACTIVE TELEMETRY: Relying strictly on MACD Structural Trend
+    bullish_mask = (df['trend_15m'] == 'BULLISH')
+    bearish_mask = (df['trend_15m'] == 'BEARISH')
+    
     if "BUY" in signal_type:
         st.subheader("🔥 THE ELITE BULLS")
         top_10 = df[bullish_mask].sort_values(by='stochrsi_15m', ascending=True).head(10)
