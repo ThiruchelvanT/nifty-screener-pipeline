@@ -10,13 +10,24 @@ import time
 # ==========================================
 # 1. SETUP AND SECURE CREDENTIALS
 # ==========================================
-db_password = os.getenv("NEON_PASSWORD")
-if not db_password:
-    raise ValueError("⚠️ CRITICAL: NEON_PASSWORD environment variable is missing!")
+# ==========================================
+# 1. PAGE CONFIGURATION & STYLING
+# ==========================================
+st.set_page_config(page_title="The Oracle: Global Intelligence", page_icon="⚖️", layout="wide")
+st.markdown("### 📡 Institutional Market Breadth")
 
-NEON_HOST = "ep-holy-star-amh8eg8r-pooler.c-5.us-east-1.aws.neon.tech"
-db_url = f"postgresql://neondb_owner:{db_password}@{NEON_HOST}:5432/neondb?sslmode=require"
+# ⚠️ THE FIX: Use Streamlit's native secrets, not os.getenv!
+db_user = st.secrets["DB_USER"]
+db_pass = st.secrets["DB_PASS"]
+db_host = st.secrets["DB_HOST"]
+db_port = st.secrets["DB_PORT"]
+
+db_url = f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/neondb?sslmode=require"
 engine = create_engine(db_url)
+
+# Fetch the pre-calculated percentages from your new Gold View
+try:
+    breadth_df = pd.read_sql("SELECT * FROM gold_market_breadth", engine)
 
 # ==========================================
 # 2. DYNAMIC NIFTY 500 INGESTION
