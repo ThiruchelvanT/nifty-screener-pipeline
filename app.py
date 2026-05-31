@@ -16,7 +16,7 @@ st.markdown("### 📡 Institutional Market Breadth")
 # Fetch the pre-calculated percentages from your new Gold View
 db_password = os.getenv("NEON_PASSWORD")
 NEON_HOST = "ep-holy-star-amh8eg8r-pooler.c-5.us-east-1.aws.neon.tech"
-db_url = f"postgresql://neondb_owner:{db_password}@{NEON_HOST}:5432/neondb?sslmode=require"
+db_url = st.secrets["DATABASE_URL"]
 engine = create_engine(db_url)
 try:
     breadth_df = pd.read_sql("SELECT * FROM gold_market_breadth", engine)
