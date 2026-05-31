@@ -67,7 +67,9 @@ def process_partition(pdf):
     pdf['close'] = pdf['close'].astype(float)
     pdf['volume'] = pdf['volume'].astype(float)
     
-    # MACD
+    # ---------------------------------------------------------
+    # MACD (Standard EMA math is fine here)
+    # ---------------------------------------------------------
     macd = pdf.ta.macd(fast=12, slow=26, signal=9)
     if macd is not None:
         pdf['macd_black'] = macd['MACD_12_26_9']
@@ -76,18 +78,41 @@ def process_partition(pdf):
         pdf['macd_black'] = None
         pdf['macd_red'] = None
         
-    # RSI
-    pdf['rsi_2'] = pdf.ta.rsi(length=2)
-    pdf['rsi_14'] = pdf.ta.rsi(length=14)
+    # ==============================================================
+    # THE TRADINGVIEW PARITY ENGINE (Custom RSI & StochRSI Math)
+    # ==============================================================
+    # STEP 1: Calculate Wilder's Smoothing (RMA) for the base RSI(14)
+    delta = pdf['close'].diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = -delta.where(delta < 0, 0.0)
     
-    # StochRSI
-    stoch = pdf.ta.stochrsi(length=14)
-    if stoch is not None:
-        pdf['stochrsi_k'] = stoch['STOCHRSIk_14_14_3_3']
-    else:
-        pdf['stochrsi_k'] = None
+    # alpha=1/14 mathematically perfectly matches TradingView's RMA
+    avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    
+    rs = avg_gain / avg_loss
+    pdf['rsi_14'] = 100 - (100 / (1 + rs))
+    
+    # STEP 2: The Hyper-Sensitive RSI(2) using the same exact RMA logic
+    avg_gain_2 = gain.ewm(alpha=1/2, min_periods=2, adjust=False).mean()
+    avg_loss_2 = loss.ewm(alpha=1/2, min_periods=2, adjust=False).mean()
+    pdf['rsi_2'] = 100 - (100 / (1 + (avg_gain_2 / avg_loss_2)))
+
+    # STEP 3: The TradingView Stochastic RSI (%K Line)
+    # 3A. Find the 14-period rolling Min and Max of the RSI_14 we just calculated
+    min_rsi = pdf['rsi_14'].rolling(window=14).min()
+    max_rsi = pdf['rsi_14'].rolling(window=14).max()
+    
+    # 3B. Calculate the Raw Stochastic Value (0 to 100)
+    raw_stoch_rsi = ((pdf['rsi_14'] - min_rsi) / (max_rsi - min_rsi)) * 100
+    
+    # 3C. THE FATAL FLAW FIXED: Apply the 3-period SMA Smoothing to get %K
+    pdf['stochrsi_k'] = raw_stoch_rsi.rolling(window=3).mean()
+    # ==============================================================
         
-    # NVI
+    # ---------------------------------------------------------
+    # NVI (Negative Volume Index)
+    # ---------------------------------------------------------
     pdf['nvi_black'] = pdf.ta.nvi(close=pdf['close'], volume=pdf['volume'])
     if pdf['nvi_black'] is not None:
         pdf['nvi_red'] = ta.ema(pdf['nvi_black'], length=255)
@@ -96,7 +121,7 @@ def process_partition(pdf):
     
     # Return a standard Pandas DataFrame matching the exact schema
     return pdf[['ticker', 'datetime', 'timeframe', 'open', 'high', 'low', 'close', 
-               'macd_black', 'macd_red', 'rsi_2', 'rsi_14', 'stochrsi_k', 'nvi_black', 'nvi_red']]
+                'macd_black', 'macd_red', 'rsi_2', 'rsi_14', 'stochrsi_k', 'nvi_black', 'nvi_red']]
 
 # ==========================================
 # 4. EXECUTE SILVER TRANSFORMATION
