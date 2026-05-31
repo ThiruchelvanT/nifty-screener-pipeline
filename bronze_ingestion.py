@@ -1,31 +1,29 @@
-import os
+import streamlit as st
 import pandas as pd
 import yfinance as yf
-from sqlalchemy import create_engine, text
-import requests
-import io
-import time
-import urllib.parse
+import psycopg2
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sqlalchemy import create_engine
+from sqlalchemy.engine import URL  # ⚠️ The new armor!
 
-
 # ==========================================
-# 1. SETUP AND SECURE CREDENTIALS
-# ==========================================
-# ==========================================
-# 1. PAGE CONFIGURATION & STYLING
+# 1. PAGE CONFIGURATION & DATABASE ENGINE
 # ==========================================
 st.set_page_config(page_title="The Oracle: Global Intelligence", page_icon="⚖️", layout="wide")
 st.markdown("### 📡 Institutional Market Breadth")
 
-# ⚠️ THE FIX: Use Streamlit's native secrets, not os.getenv!
-db_user = st.secrets["DB_USER"]
-db_pass_raw = st.secrets["DB_PASS"]
-db_host = st.secrets["DB_HOST"]
-db_port = st.secrets["DB_PORT"]
+# The absolutely bulletproof way to build a SQLAlchemy connection
+db_url = URL.create(
+    drivername="postgresql+psycopg2",
+    username=st.secrets["DB_USER"],
+    password=st.secrets["DB_PASS"],
+    host=st.secrets["DB_HOST"],
+    port=st.secrets["DB_PORT"],
+    database="neondb",
+    query={"sslmode": "require"}
+)
 
-db_pass_encoded = urllib.parse.quote_plus(db_pass_raw)
-
-db_url = f"postgresql://{db_user}:{db_pass_raw}@{db_host}:{db_port}/neondb?sslmode=require"
 engine = create_engine(db_url)
 
 # Fetch the pre-calculated percentages from your new Gold View
