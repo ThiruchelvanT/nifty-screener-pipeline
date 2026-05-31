@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, text
 import requests
 import io
 import time
+import urllib.parse
 
 
 # ==========================================
@@ -18,11 +19,13 @@ st.markdown("### 📡 Institutional Market Breadth")
 
 # ⚠️ THE FIX: Use Streamlit's native secrets, not os.getenv!
 db_user = st.secrets["DB_USER"]
-db_pass = st.secrets["DB_PASS"]
+db_pass_raw = st.secrets["DB_PASS"]
 db_host = st.secrets["DB_HOST"]
 db_port = st.secrets["DB_PORT"]
 
-db_url = f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/neondb?sslmode=require"
+db_pass_encoded = urllib.parse.quote_plus(db_pass_raw)
+
+db_url = f"postgresql://{db_user}:{db_pass_raw}@{db_host}:{db_port}/neondb?sslmode=require"
 engine = create_engine(db_url)
 
 # Fetch the pre-calculated percentages from your new Gold View
