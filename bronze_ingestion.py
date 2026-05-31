@@ -1,34 +1,22 @@
-import streamlit as st
+import os
 import pandas as pd
 import yfinance as yf
-import psycopg2
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from sqlalchemy import create_engine
-from sqlalchemy.engine import URL  # ⚠️ The new armor!
+from sqlalchemy import create_engine, text
+import requests
+import io
+import time
+
 
 # ==========================================
-# 1. PAGE CONFIGURATION & DATABASE ENGINE
+# 1. SETUP AND SECURE CREDENTIALS
 # ==========================================
-st.set_page_config(page_title="The Oracle: Global Intelligence", page_icon="⚖️", layout="wide")
-st.markdown("### 📡 Institutional Market Breadth")
+db_password = os.getenv("NEON_PASSWORD")
+if not db_password:
+    raise ValueError("⚠️ CRITICAL: NEON_PASSWORD environment variable is missing!")
 
-# The absolutely bulletproof way to build a SQLAlchemy connection
-db_url = URL.create(
-    drivername="postgresql+psycopg2",
-    username=st.secrets["DB_USER"],
-    password=st.secrets["DB_PASS"],
-    host=st.secrets["DB_HOST"],
-    port=st.secrets["DB_PORT"],
-    database="neondb",
-    query={"sslmode": "require"}
-)
-
+NEON_HOST = "ep-holy-star-amh8eg8r-pooler.c-5.us-east-1.aws.neon.tech"
+db_url = f"postgresql://neondb_owner:{db_password}@{NEON_HOST}:5432/neondb?sslmode=require"
 engine = create_engine(db_url)
-
-# Fetch the pre-calculated percentages from your new Gold View
-try:
-    breadth_df = pd.read_sql("SELECT * FROM gold_market_breadth", engine)
 
 # ==========================================
 # 2. DYNAMIC NIFTY 500 INGESTION
