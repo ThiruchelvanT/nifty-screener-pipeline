@@ -3,7 +3,7 @@ name: Daily Bronze Data Ingestion Pipeline
 on:
   schedule:
     # Trigger automatically every single day at 16:00 UTC (9:30 PM IST)
-    - cron: '0 16 * * *'
+    # - cron: '0 16 * * *'
   workflow_dispatch:
     # Allows you to manually click "Run workflow" in GitHub UI anytime for testing
 
