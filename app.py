@@ -11,35 +11,6 @@ import os
 # 1. PAGE CONFIGURATION & STYLING
 # ==========================================
 st.set_page_config(page_title="The Oracle: Global Intelligence", page_icon="⚖️", layout="wide")
-st.markdown("### 📡 Institutional Market Breadth")
-
-# Fetch the pre-calculated percentages from your new Gold View
-db_password = os.getenv("NEON_PASSWORD")
-NEON_HOST = "ep-holy-star-amh8eg8r-pooler.c-5.us-east-1.aws.neon.tech"
-db_url = st.secrets["DATABASE_URL"]
-engine = create_engine(db_url)
-try:
-    breadth_df = pd.read_sql("SELECT * FROM gold_market_breadth", engine)
-    
-    if not breadth_df.empty:
-        elite_pct = breadth_df['elite_bullish_percentage'].iloc[0]
-        bear_pct = breadth_df['terminal_bearish_percentage'].iloc[0]
-        elite_count = breadth_df['elite_bulls'].iloc[0]
-        
-        # Display as a beautiful 3-column metric row
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric(label="🐂 Elite Bullish %", value=f"{elite_pct}%", delta="Strict Confluence")
-        with col2:
-            st.metric(label="🐻 Terminal Bearish %", value=f"{bear_pct}%", delta="-Avoid", delta_color="inverse")
-        with col3:
-            st.metric(label="🎯 Active Targets", value=f"{elite_count} Stocks", delta="Ready for Screener")
-            
-        st.divider() # Draws a clean line before your main Screener table
-        
-except Exception as e:
-    st.warning(f"Market Breadth Radar offline: {e}")
 
 st.markdown("""
     <style>
@@ -49,10 +20,41 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. DATA LOADERS
+# 2. DATA LOADERS (CACHED TO PROTECT NEON DB)
 # ==========================================
+@st.cache_data(ttl=900)
+def load_market_breadth():
+    """Fetches Market Breadth (Cached for 15 minutes)"""
+    try:
+        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        df = pd.read_sql("SELECT * FROM gold_market_breadth", temp_engine)
+        temp_engine.dispose()
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=900)
+def load_ledger_scoreboard():
+    """Fetches the Forward-Testing Win Rate (Cached for 15 minutes)"""
+    try:
+        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        query = """
+            SELECT 
+                COUNT(*) as total_signals,
+                SUM(CASE WHEN verdict = 'WIN' THEN 1 ELSE 0 END) as total_wins,
+                ROUND(AVG(pnl_percentage), 2) as average_return
+            FROM gold_signal_ledger
+            WHERE verdict != 'PENDING';
+        """
+        df = pd.read_sql(query, temp_engine)
+        temp_engine.dispose()
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
 @st.cache_data(ttl=300) 
 def get_global_indices():
+    """Fetches Live Global Market Data from Yahoo (Cached for 5 minutes)"""
     indices = {
         "^DJI": "Dow Jones (US)", "^IXIC": "Nasdaq (US)", "^GSPC": "S&P 500 (US)",
         "^N225": "Nikkei 225 (JP)", "BTC-USD": "Bitcoin"
@@ -73,6 +75,7 @@ def get_global_indices():
 
 @st.cache_data(ttl=900) 
 def load_gold_data():
+    """Fetches the Master Screener Data (Cached for 15 minutes)"""
     try:
         conn = psycopg2.connect(
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
@@ -95,7 +98,7 @@ def load_gold_data():
 
 @st.cache_data(ttl=900)
 def load_silver_history(ticker, timeframe):
-    """Pulls time-series data directly from the Silver Layer for charting"""
+    """Pulls time-series data directly from the Silver Layer for charting (Cached for 15 mins)"""
     try:
         conn = psycopg2.connect(
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
@@ -116,7 +119,7 @@ def load_silver_history(ticker, timeframe):
         FROM silver_technical_indicators
         WHERE ticker = '{ticker}' AND LOWER(timeframe) = '{timeframe}'
         ORDER BY {distinct_col} DESC, datetime DESC
-        LIMIT 150;
+        LIMIT 1000;
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
@@ -127,25 +130,52 @@ def load_silver_history(ticker, timeframe):
         # ==========================================
         # TIMEZONE TRANSLATION (UTC -> IST)
         # ==========================================
-        # 1. Ensure the column is recognized as a datetime object
         df['datetime'] = pd.to_datetime(df['datetime'])
         
-        # 2. If the database stripped the timezone tag, explicitly tell Pandas it is UTC
+        # If the database stripped the timezone tag, explicitly tell Pandas it is UTC
         if df['datetime'].dt.tz is None:
             df['datetime'] = df['datetime'].dt.tz_localize('UTC')
             
-        # 3. Translate the timestamps to Indian Standard Time for the UI
+        # Translate the timestamps to Indian Standard Time for the UI
         df['datetime'] = df['datetime'].dt.tz_convert('Asia/Kolkata')
         
-        # Sort chronologically (oldest to newest) so Plotly draws the lines perfectly forward
+        # Strip the timezone tag so Plotly rangebreaks process it cleanly
+        df['datetime'] = df['datetime'].dt.tz_localize(None) 
+        
         return df.sort_values(by="datetime", ascending=True)
         
     except Exception as e:
         st.error(f"Failed to breach the Silver Vault: {e}")
         return pd.DataFrame()
 
+
 # ==========================================
-# 3. SIDEBAR (Global Pulse)
+# 3. TOP LEVEL: BREADTH RADAR
+# ==========================================
+st.markdown("### 📡 Institutional Market Breadth")
+breadth_df = load_market_breadth()
+
+try:
+    if not breadth_df.empty:
+        elite_pct = breadth_df['elite_bullish_percentage'].iloc[0]
+        bear_pct = breadth_df['terminal_bearish_percentage'].iloc[0]
+        elite_count = breadth_df['elite_bulls'].iloc[0]
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(label="🐂 Elite Bullish %", value=f"{elite_pct}%", delta="Strict Confluence")
+        with col2:
+            st.metric(label="🐻 Terminal Bearish %", value=f"{bear_pct}%", delta="-Avoid", delta_color="inverse")
+        with col3:
+            st.metric(label="🎯 Active Targets", value=f"{elite_count} Stocks", delta="Ready for Screener")
+            
+        st.divider() 
+except Exception as e:
+    st.warning(f"Market Breadth Radar offline: {e}")
+
+
+# ==========================================
+# 4. SIDEBAR (Global Pulse)
 # ==========================================
 data_result = load_gold_data()
 global_data = get_global_indices()
@@ -170,12 +200,12 @@ st.sidebar.subheader("International Markets")
 for index in global_data:
     st.sidebar.metric(label=index['Name'], value=f"{index['Price']:,.2f}", delta=f"{index['Change']:.2f}%")
 
+
 # ==========================================
-# 4. MAIN UI (Tabs)
+# 5. MAIN UI (Tabs)
 # ==========================================
 st.title("⚖️ The Market Oracle")
 
-# Create the Navigation Tabs
 tab1, tab2 = st.tabs(["📊 The Screener", "📈 The X-Ray Sandbox"])
 
 # ------------------------------------------
@@ -184,29 +214,21 @@ tab1, tab2 = st.tabs(["📊 The Screener", "📈 The X-Ray Sandbox"])
 with tab1:
     st.subheader("🏆 The Oracle's True Win Rate")
     
-    # ---> THE FORWARD-TESTING SCOREBOARD <---
+    # ---> THE CACHED FORWARD-TESTING SCOREBOARD <---
     try:
-        # Fetch the settled trades from the new ledger
-        query = """
-            SELECT 
-                COUNT(*) as total_signals,
-                SUM(CASE WHEN verdict = 'WIN' THEN 1 ELSE 0 END) as total_wins,
-                ROUND(AVG(pnl_percentage), 2) as average_return
-            FROM gold_signal_ledger
-            WHERE verdict != 'PENDING';
-        """
-        ledger_df = pd.read_sql(query, engine)
-        
-        # Calculate Win Rate (protect against divide-by-zero on day 1)
-        total_settled = ledger_df['total_signals'].iloc[0]
-        if total_settled > 0:
-            win_rate = (ledger_df['total_wins'].iloc[0] / total_settled) * 100
-            avg_ret = ledger_df['average_return'].iloc[0]
-            st.metric(
-                label=f"System Accuracy ({total_settled} Settled Trades)", 
-                value=f"{win_rate:.1f}%", 
-                delta=f"Avg Return: {avg_ret}%"
-            )
+        ledger_df = load_ledger_scoreboard()
+        if not ledger_df.empty:
+            total_settled = ledger_df['total_signals'].iloc[0]
+            if total_settled > 0:
+                win_rate = (ledger_df['total_wins'].iloc[0] / total_settled) * 100
+                avg_ret = ledger_df['average_return'].iloc[0]
+                st.metric(
+                    label=f"System Accuracy ({total_settled} Settled Trades)", 
+                    value=f"{win_rate:.1f}%", 
+                    delta=f"Avg Return: {avg_ret}%"
+                )
+            else:
+                st.info("📊 Forward-Testing Engine Active. Awaiting first T+1 settlements...")
         else:
             st.info("📊 Forward-Testing Engine Active. Awaiting first T+1 settlements...")
             
@@ -232,9 +254,6 @@ with tab1:
     signal_type = st.radio("⚔️ **SIGNAL SELECTION:**", ["BUY (The Rebound)", "SELL (The Collapse)"], horizontal=True)
 
     # 🛑 SENSOR OFFLINE: StochRSI and NVI are temporarily decoupled due to data feed inversion.
-    # bullish_mask = ((df['stochrsi_15m'] < 40) & (df['trend_15m'] == 'BULLISH') & (df['smart_money_daily'] == 'ACCUMULATION'))
-    # bearish_mask = ((df['stochrsi_15m'] > 75) & (df['trend_15m'] == 'BEARISH') & (df['smart_money_daily'] == 'DISTRIBUTION'))
-
     # 🟢 ACTIVE TELEMETRY: Relying strictly on MACD Structural Trend
     bullish_mask = (df['trend_15m'] == 'BULLISH')
     bearish_mask = (df['trend_15m'] == 'BEARISH')
@@ -262,13 +281,9 @@ with tab1:
     st.subheader("📁 The Full Data Vault")
     st.markdown("Manually search the master ledger for specific stock alignments.")
     
-    # Search Bar
     search_query = st.text_input("🔍 Search Stock Symbol (e.g., RELIANCE, HDFC)", "").upper()
-    
-    # Filter the dataframe based on search
     vault_df = df[df['ticker'].str.contains(search_query, na=False)] if search_query else df
     
-    # Display the full, scrollable dataframe
     st.dataframe(
         vault_df[['ticker', 'latest_close', 'stochrsi_15m', 'smart_money_daily', 'trend_15m']], 
         use_container_width=True, 
@@ -285,172 +300,110 @@ with tab2:
     st.subheader("🔬 Institutional Indicator X-Ray")
     st.markdown("Dive into the raw mathematical momentum and accumulation of a specific asset across multiple timeframes.")
     
-    # ⚠️ Create columns for a clean top-bar layout
     ctrl_col1, ctrl_col2 = st.columns([2, 1])
-    
     with ctrl_col1:
         target_ticker = st.selectbox("Select Asset to Analyze:", df['ticker'].sort_values().unique())
         
     with ctrl_col2:
-        # The Timeframe Switcher
-        selected_tf_label = st.radio(
-            "Lens (Timeframe):", 
-            ["15m (Intraday)", "1h (Swing)", "1d (Macro)"], 
-            horizontal=True
-        )
+        selected_tf_label = st.radio("Lens (Timeframe):", ["15m (Intraday)", "1h (Swing)", "1d (Macro)"], horizontal=True)
     
-    # Map the UI label to the exact string our database expects
-    tf_map = {
-        "15m (Intraday)": "15m",
-        "1h (Swing)": "1h",
-        "1d (Macro)": "1d"
-    }
+    tf_map = {"15m (Intraday)": "15m", "1h (Swing)": "1h", "1d (Macro)": "1d"}
     target_timeframe = tf_map[selected_tf_label]
     
     if target_ticker:
-        # Pass BOTH parameters to our updated data loader
         chart_df = load_silver_history(target_ticker, target_timeframe)
         
         if not chart_df.empty:
-            # --- ON-THE-FLY MATH ---
-            # 1. MACD Histogram
             chart_df['macd_hist'] = chart_df['macd_black'] - chart_df['macd_red']
             hist_colors = ['#26A69A' if val >= 0 else '#EF5350' for val in chart_df['macd_hist']]
             
-            # 2. RSI(2) Shading Math
             chart_df['rsi_2_over'] = chart_df['rsi_2'].clip(lower=75)
             chart_df['rsi_2_under'] = chart_df['rsi_2'].clip(upper=20)
 
-            # Create a 6-row Plotly chart
             fig = make_subplots(
                 rows=6, cols=1, shared_xaxes=True, 
-                vertical_spacing=0.03, # Tighter spacing to fit everything
+                vertical_spacing=0.03,
                 row_heights=[0.25, 0.15, 0.15, 0.15, 0.15, 0.15],
                 subplot_titles=(
-                    f"{target_ticker} - Close Price", 
-                    "MACD (12, 26, 9)", 
-                    "RSI (2) - Extreme Mean Reversion", 
-                    "Stochastic RSI", 
-                    "RSI (14) - Structural Trend", 
-                    "NVI - Institutional Flow"
+                    f"{target_ticker} - Close Price", "MACD (12, 26, 9)", 
+                    "RSI (2) - Extreme Mean Reversion", "Stochastic RSI", 
+                    "RSI (14) - Structural Trend", "NVI - Institutional Flow"
                 )
             )
 
-            # ==========================================
-            # ROW 1: PRICE (Japanese Candlesticks)
-            # ==========================================
+            # ROW 1: PRICE
             fig.add_trace(go.Candlestick(
-                x=chart_df['datetime'],
-                open=chart_df['open'],
-                high=chart_df['high'],
-                low=chart_df['low'],
-                close=chart_df['close'],
-                name='Price',
-                increasing_line_color='#26A69A', # TradingView Green
-                decreasing_line_color='#EF5350'  # TradingView Red
+                x=chart_df['datetime'], open=chart_df['open'], high=chart_df['high'],
+                low=chart_df['low'], close=chart_df['close'], name='Price',
+                increasing_line_color='#26A69A', decreasing_line_color='#EF5350' 
             ), row=1, col=1)
             
-            # ==========================================
-            # ROW 2: MACD (Lines Only, No Histogram)
-            # ==========================================
+            # ROW 2: MACD 
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_black'], name='MACD Line', line=dict(color='white', width=1.5)), row=2, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_red'], name='Signal Line', line=dict(color='red', width=1.5)), row=2, col=1)
             
-            # ==========================================
             # ROW 3: RSI (2)
-            # ==========================================
-            # Invisible boundaries and shading
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=[75]*len(chart_df), mode='lines', line=dict(color='rgba(255,255,255,0)', width=0), hoverinfo='skip'), row=3, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2_over'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=[20]*len(chart_df), mode='lines', line=dict(color='rgba(255,255,255,0)', width=0), hoverinfo='skip'), row=3, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2_under'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
-            # The RSI 2 Line
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2'], name='RSI(2)', line=dict(color='#FFA500', width=1.5)), row=3, col=1)
 
-            # ==========================================
             # ROW 4: STOCHASTIC RSI
-            # ==========================================
             fig.add_hrect(y0=20, y1=80, fillcolor="rgba(255, 100, 100, 0.1)", layer="below", line_width=0, row=4, col=1)
             fig.add_hline(y=80, line_width=1, line_color="gray", row=4, col=1)
             fig.add_hline(y=20, line_width=1, line_color="gray", row=4, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['stochrsi_k'], name='StochRSI', line=dict(color='#0055FF', width=1.5)), row=4, col=1)
 
-            # ==========================================
             # ROW 5: RSI (14)
-            # ==========================================
             fig.add_hline(y=70, line_dash="dot", line_color="red", row=5, col=1)
             fig.add_hline(y=30, line_dash="dot", line_color="green", row=5, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_14'], name='RSI(14)', line=dict(color='#E0E0E0', width=1.5)), row=5, col=1)
 
-            # ==========================================
             # ROW 6: NVI
-            # ==========================================
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['nvi_black'], name='NVI Raw', line=dict(color='white', width=1.5)), row=6, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['nvi_red'], name='NVI EMA(255)', line=dict(color='#FF3333', width=1.5)), row=6, col=1)
 
-            # --- TRADINGVIEW STYLE VALUE BUBBLES ---
+            # VALUE BUBBLES
             last_date = chart_df['datetime'].iloc[-1]
-            
-            # StochRSI Bubble (Row 4)
             last_stoch = chart_df['stochrsi_k'].iloc[-1]
             if pd.notna(last_stoch):
                 fig.add_annotation(
                     x=last_date, y=last_stoch, text=f"<b>{last_stoch:.2f}</b>",
-                    showarrow=False, xanchor='left', xshift=10,
-                    bgcolor="#0055FF", font=dict(color="white", size=11),
+                    showarrow=False, xanchor='left', xshift=10, bgcolor="#0055FF", font=dict(color="white", size=11),
                     borderpad=3, bordercolor="white", borderwidth=1, row=4, col=1
                 )
 
-            # NVI Bubbles (Row 6)
             last_nvi_black = chart_df['nvi_black'].iloc[-1]
             last_nvi_red = chart_df['nvi_red'].iloc[-1]
             if pd.notna(last_nvi_black):
                 fig.add_annotation(
                     x=last_date, y=last_nvi_black, text=f"<b>{last_nvi_black:.2f}</b>",
-                    showarrow=False, xanchor='left', xshift=10,
-                    bgcolor="white", font=dict(color="black", size=11),
+                    showarrow=False, xanchor='left', xshift=10, bgcolor="white", font=dict(color="black", size=11),
                     borderpad=3, bordercolor="black", borderwidth=1, row=6, col=1
                 )
             if pd.notna(last_nvi_red):
                 fig.add_annotation(
                     x=last_date, y=last_nvi_red, text=f"<b>{last_nvi_red:.2f}</b>",
-                    showarrow=False, xanchor='left', xshift=10,
-                    bgcolor="#FF3333", font=dict(color="white", size=11),
+                    showarrow=False, xanchor='left', xshift=10, bgcolor="#FF3333", font=dict(color="white", size=11),
                     borderpad=3, bordercolor="white", borderwidth=1, row=6, col=1
                 )
 
-            # --- STRICT LAYOUT LOCKS ---
+            # LAYOUT LOCKS & TIME-FOLDING FIX
             fig.update_layout(
-                height=1200, 
-                template="plotly_dark",
-                paper_bgcolor='rgba(0,0,0,0)', 
-                plot_bgcolor='rgba(0,0,0,0)',
-                showlegend=False,
-                margin=dict(l=0, r=60, t=30, b=0),
-                dragmode='pan',
-                xaxis_rangeslider_visible=False,
-                xaxis=dict(
-                    type="date" 
-                    # ⚠️ The 'rangeselector' block (1W, 1M, 1Y) has been completely eradicated
-                )
+                height=1200, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                showlegend=False, margin=dict(l=0, r=60, t=30, b=0), dragmode='pan',
+                xaxis_rangeslider_visible=False, xaxis=dict(type="date")
             )
             fig.update_yaxes(fixedrange=True)
             
-            # --- THE TIME-FOLDING FIX (RANGEBREAKS) ---
-            # By converting to IST above, this 09:15 to 15:30 rangebreak logic will now work flawlessly!
             if target_timeframe == '1d':
-                fig.update_xaxes(
-                    rangebreaks=[
-                        dict(bounds=["sat", "mon"])
-                    ]
-                )
+                fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
             else:
-                fig.update_xaxes(
-                    rangebreaks=[
-                        dict(bounds=["sat", "mon"]),
-                        dict(bounds=[15.5, 9.25], pattern="hour") 
-                    ]
-                )
+                fig.update_xaxes(rangebreaks=[
+                    dict(bounds=["sat", "mon"]),
+                    dict(bounds=[15.5, 9.25], pattern="hour") 
+                ])
 
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom':False, 'displayModeBar': False})
         else:
