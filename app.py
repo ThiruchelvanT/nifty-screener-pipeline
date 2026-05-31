@@ -182,6 +182,39 @@ tab1, tab2 = st.tabs(["📊 The Screener", "📈 The X-Ray Sandbox"])
 # TAB 1: THE SCREENER (Gold Layer)
 # ------------------------------------------
 with tab1:
+    st.subheader("🏆 The Oracle's True Win Rate")
+    
+    # ---> THE FORWARD-TESTING SCOREBOARD <---
+    try:
+        # Fetch the settled trades from the new ledger
+        query = """
+            SELECT 
+                COUNT(*) as total_signals,
+                SUM(CASE WHEN verdict = 'WIN' THEN 1 ELSE 0 END) as total_wins,
+                ROUND(AVG(pnl_percentage), 2) as average_return
+            FROM gold_signal_ledger
+            WHERE verdict != 'PENDING';
+        """
+        ledger_df = pd.read_sql(query, engine)
+        
+        # Calculate Win Rate (protect against divide-by-zero on day 1)
+        total_settled = ledger_df['total_signals'].iloc[0]
+        if total_settled > 0:
+            win_rate = (ledger_df['total_wins'].iloc[0] / total_settled) * 100
+            avg_ret = ledger_df['average_return'].iloc[0]
+            st.metric(
+                label=f"System Accuracy ({total_settled} Settled Trades)", 
+                value=f"{win_rate:.1f}%", 
+                delta=f"Avg Return: {avg_ret}%"
+            )
+        else:
+            st.info("📊 Forward-Testing Engine Active. Awaiting first T+1 settlements...")
+            
+    except Exception as e:
+        st.warning("Ledger Database Offline. Run Phase 1 SQL in Neon to initialize.")
+    
+    st.divider()
+
     st.subheader("🌊 Market Breadth (Overall Sentiment)")
     total = len(df)
     if total > 0:
@@ -386,7 +419,6 @@ with tab2:
                     borderpad=3, bordercolor="white", borderwidth=1, row=6, col=1
                 )
 
-            # --- STRICT LAYOUT LOCKS ---
             # --- STRICT LAYOUT LOCKS ---
             fig.update_layout(
                 height=1200, 
