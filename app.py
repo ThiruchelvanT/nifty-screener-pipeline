@@ -119,7 +119,7 @@ def load_silver_history(ticker, timeframe):
         FROM silver_technical_indicators
         WHERE ticker = '{ticker}' AND LOWER(timeframe) = '{timeframe}'
         ORDER BY {distinct_col} DESC, datetime DESC
-        LIMIT 1000;
+        LIMIT 300;
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
