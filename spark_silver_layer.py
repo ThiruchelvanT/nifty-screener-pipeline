@@ -181,3 +181,89 @@ finally:
         cursor.close()
     if 'conn' in locals():
         conn.close()
+
+# ==========================================
+# ⚖️ THE ORACLE'S FORWARD-TESTING LEDGER
+# ==========================================
+import psycopg2
+import os
+
+print("Initiating Forward-Testing Ledger Protocol...")
+
+try:
+    # 1. Connect to the Neon DB Vault
+    conn = psycopg2.connect(
+        host=os.environ.get("DB_HOST"), port=os.environ.get("DB_PORT"), dbname="neondb",    
+        user=os.environ.get("DB_USER"), password=os.environ.get("DB_PASS")
+    )
+    cursor = conn.cursor()
+
+    # ------------------------------------------
+    # PHASE 1: THE SETTLEMENT (Grade Yesterday's Trades)
+    # ------------------------------------------
+    cursor.execute("SELECT signal_id, ticker, entry_price FROM gold_signal_ledger WHERE verdict = 'PENDING';")
+    pending_trades = cursor.fetchall()
+    
+    if pending_trades:
+        print(f"Settling {len(pending_trades)} pending trades from previous session...")
+        for trade in pending_trades:
+            signal_id, ticker, entry_price = trade
+            
+            # Fetch today's closing price for this ticker
+            cursor.execute(f"SELECT latest_close FROM gold_screener_latest WHERE ticker = '{ticker}';")
+            result = cursor.fetchone()
+            
+            if result:
+                settlement_price = float(result[0])
+                entry_price = float(entry_price)
+                pnl = round(((settlement_price - entry_price) / entry_price) * 100, 2)
+                
+                # A BULLISH signal wins if the price went up
+                verdict = 'WIN' if pnl > 0 else 'LOSS'
+                
+                cursor.execute(f"""
+                    UPDATE gold_signal_ledger 
+                    SET settlement_date = NOW(), 
+                        settlement_price = {settlement_price}, 
+                        pnl_percentage = {pnl}, 
+                        verdict = '{verdict}'
+                    WHERE signal_id = {signal_id};
+                """)
+    else:
+        print("No pending trades to settle.")
+
+    # ------------------------------------------
+    # PHASE 2: THE CAPTURE (Log Today's New Trades)
+    # ------------------------------------------
+    # We only want to capture stocks that are actually firing a BULLISH structural trend today
+    cursor.execute("SELECT ticker, latest_close FROM gold_screener_latest WHERE trend_15m = 'BULLISH';")
+    todays_bulls = cursor.fetchall()
+    
+    if todays_bulls:
+        print(f"Capturing {len(todays_bulls)} new Elite Bulls for tomorrow's settlement...")
+        for bull in todays_bulls:
+            ticker, close_price = bull
+            
+            # Prevent duplicate inserts if the engine is run multiple times in one day
+            cursor.execute(f"""
+                SELECT COUNT(*) FROM gold_signal_ledger 
+                WHERE ticker = '{ticker}' AND DATE(signal_date) = CURRENT_DATE AND verdict = 'PENDING';
+            """)
+            is_duplicate = cursor.fetchone()[0] > 0
+            
+            if not is_duplicate:
+                cursor.execute(f"""
+                    INSERT INTO gold_signal_ledger (ticker, signal_date, signal_type, entry_price, target_timeframe, verdict)
+                    VALUES ('{ticker}', NOW(), 'BULLISH', {close_price}, '1d', 'PENDING');
+                """)
+    else:
+        print("No Elite Bulls found today. The Council remains silent.")
+
+    # Commit the transactions and close the vault
+    conn.commit()
+    cursor.close()
+    conn.close()
+    print("Forward-Testing Ledger updated successfully.")
+
+except Exception as e:
+    print(f"CRITICAL ERROR in Ledger Protocol: {e}")
