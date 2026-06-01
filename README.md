@@ -6,7 +6,7 @@
 ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-CI%2FCD-2088FF?style=flat-square&logo=githubactions)
 ![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B?style=flat-square&logo=streamlit)
 
-![Oracle Data Architecture](oracle-architecture.png)
+![Oracle Data Architecture](/assets/oracle-architecture.svg)
 
 ## 📌 Overview
 The Market Oracle is an automated, serverless data engineering pipeline designed to ingest, transform, and serve institutional-grade stock market indicators. 
