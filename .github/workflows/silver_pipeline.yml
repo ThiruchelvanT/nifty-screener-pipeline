@@ -3,9 +3,7 @@ name: ⚙️ Nifty Silver Layer Transformation
 on:
   workflow_dispatch: # Keeps your manual run button
   schedule:
-    # Runs every 15 minutes between 04:00 UTC and 10:59 UTC
-    # (Covers the NSE trading window of 09:15 IST to 15:30 IST)
-    # Monday through Friday
+    # Runs exactly ONCE a day at 10:30 UTC (4:00 PM IST), Monday through Friday
     - cron: '30 10 * * 1-5'
 
 jobs:
@@ -35,7 +33,6 @@ jobs:
       - name: 📦 Install Data Engineering Stack
         run: |
           python -m pip install --upgrade pip
-          # ⚠️ ADDED: yfinance, sqlalchemy, requests to support the Bronze ingestion script
           pip install "pyspark==3.5.1" "numpy==1.26.4" "pandas==2.1.4" "numba==0.58.1" "pyarrow==14.0.1" psycopg2-binary yfinance sqlalchemy requests
           pip install git+https://github.com/MerlinR/Pandas-ta-fork.git
 
