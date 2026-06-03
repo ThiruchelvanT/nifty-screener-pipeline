@@ -33,7 +33,7 @@ jobs:
       - name: 📦 Install Data Engineering Stack
         run: |
           python -m pip install --upgrade pip
-          pip install "pyspark==3.5.1" "numpy==1.26.4" "pandas==2.1.4" "numba==0.58.1" "pyarrow==14.0.1" psycopg2-binary yfinance sqlalchemy requests
+          pip install "pyspark==3.5.1" "numpy==1.26.4" "pandas==2.1.4" "numba==0.58.1" "pyarrow==14.0.1" psycopg2-binary yfinance sqlalchemy requests psutil
           pip install git+https://github.com/MerlinR/Pandas-ta-fork.git
 
       - name: 📥 Run Bronze Ingestion (Fetch Live Data)
