@@ -20,11 +20,10 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. DATA LOADERS (CACHED TO PROTECT NEON DB)
+# 2. DATA LOADERS
 # ==========================================
 @st.cache_data(ttl=900)
 def load_market_breadth():
-    """Fetches Market Breadth (Cached for 15 minutes)"""
     try:
         temp_engine = create_engine(st.secrets["DATABASE_URL"])
         df = pd.read_sql("SELECT * FROM gold_market_breadth", temp_engine)
@@ -35,7 +34,6 @@ def load_market_breadth():
 
 @st.cache_data(ttl=900)
 def load_ledger_scoreboard():
-    """Fetches the Forward-Testing Win Rate (Cached for 15 minutes)"""
     try:
         temp_engine = create_engine(st.secrets["DATABASE_URL"])
         query = """
@@ -54,7 +52,6 @@ def load_ledger_scoreboard():
 
 @st.cache_data(ttl=300) 
 def get_global_indices():
-    """Fetches Live Global Market Data from Yahoo (Cached for 5 minutes)"""
     indices = {
         "^DJI": "Dow Jones (US)", "^IXIC": "Nasdaq (US)", "^GSPC": "S&P 500 (US)",
         "^N225": "Nikkei 225 (JP)", "BTC-USD": "Bitcoin"
@@ -75,7 +72,6 @@ def get_global_indices():
 
 @st.cache_data(ttl=900) 
 def load_gold_data():
-    """Fetches the Master Screener Data (Cached for 15 minutes)"""
     try:
         conn = psycopg2.connect(
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
@@ -98,14 +94,12 @@ def load_gold_data():
 
 @st.cache_data(ttl=900)
 def load_silver_history(ticker, timeframe):
-    """Pulls time-series data directly from the Silver Layer for charting (Cached for 15 mins)"""
     try:
         conn = psycopg2.connect(
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
         
-        # --- THE TIMESTAMP DRIFT FIX ---
         if timeframe == '1d':
             distinct_col = "datetime::date"
         else:
@@ -114,7 +108,7 @@ def load_silver_history(ticker, timeframe):
         query = f"""
         SELECT DISTINCT ON ({distinct_col}) 
                datetime, open, high, low, close, macd_black, macd_red, 
-               rsi_2, stochrsi_k, rsi_14, 
+               rsi_2, stochrsi_k, stochrsi_d, rsi_14, 
                nvi_black, nvi_red
         FROM silver_technical_indicators
         WHERE ticker = '{ticker}' AND LOWER(timeframe) = '{timeframe}'
@@ -124,26 +118,16 @@ def load_silver_history(ticker, timeframe):
         df = pd.read_sql_query(query, conn)
         conn.close()
         
-        if df.empty:
-            return df
+        if df.empty: return df
             
-        # ==========================================
-        # TIMEZONE TRANSLATION (UTC -> IST)
-        # ==========================================
         df['datetime'] = pd.to_datetime(df['datetime'])
-        
-        # If the database stripped the timezone tag, explicitly tell Pandas it is UTC
         if df['datetime'].dt.tz is None:
             df['datetime'] = df['datetime'].dt.tz_localize('UTC')
             
-        # Translate the timestamps to Indian Standard Time for the UI
         df['datetime'] = df['datetime'].dt.tz_convert('Asia/Kolkata')
-        
-        # Strip the timezone tag so Plotly rangebreaks process it cleanly
         df['datetime'] = df['datetime'].dt.tz_localize(None) 
         
         return df.sort_values(by="datetime", ascending=True)
-        
     except Exception as e:
         st.error(f"Failed to breach the Silver Vault: {e}")
         return pd.DataFrame()
@@ -168,7 +152,6 @@ try:
             st.metric(label="🐻 Terminal Bearish %", value=f"{bear_pct}%", delta="-Avoid", delta_color="inverse")
         with col3:
             st.metric(label="🎯 Active Targets", value=f"{elite_count} Stocks", delta="Ready for Screener")
-            
         st.divider() 
 except Exception as e:
     st.warning(f"Market Breadth Radar offline: {e}")
@@ -180,8 +163,7 @@ except Exception as e:
 data_result = load_gold_data()
 global_data = get_global_indices()
 
-if data_result[0] is None:
-    st.stop() 
+if data_result[0] is None: st.stop() 
 
 df, filename = data_result
 
@@ -205,7 +187,6 @@ for index in global_data:
 # 5. MAIN UI (Tabs)
 # ==========================================
 st.title("⚖️ The Market Oracle")
-
 tab1, tab2 = st.tabs(["📊 The Screener", "📈 The X-Ray Sandbox"])
 
 # ------------------------------------------
@@ -213,8 +194,6 @@ tab1, tab2 = st.tabs(["📊 The Screener", "📈 The X-Ray Sandbox"])
 # ------------------------------------------
 with tab1:
     st.subheader("🏆 The Oracle's True Win Rate")
-    
-    # ---> THE CACHED FORWARD-TESTING SCOREBOARD <---
     try:
         ledger_df = load_ledger_scoreboard()
         if not ledger_df.empty:
@@ -222,21 +201,15 @@ with tab1:
             if total_settled > 0:
                 win_rate = (ledger_df['total_wins'].iloc[0] / total_settled) * 100
                 avg_ret = ledger_df['average_return'].iloc[0]
-                st.metric(
-                    label=f"System Accuracy ({total_settled} Settled Trades)", 
-                    value=f"{win_rate:.1f}%", 
-                    delta=f"Avg Return: {avg_ret}%"
-                )
+                st.metric(label=f"System Accuracy ({total_settled} Settled Trades)", value=f"{win_rate:.1f}%", delta=f"Avg Return: {avg_ret}%")
             else:
                 st.info("📊 Forward-Testing Engine Active. Awaiting first T+1 settlements...")
         else:
             st.info("📊 Forward-Testing Engine Active. Awaiting first T+1 settlements...")
-            
     except Exception as e:
-        st.warning("Ledger Database Offline. Run Phase 1 SQL in Neon to initialize.")
+        st.warning("Ledger Database Offline.")
     
     st.divider()
-
     st.subheader("🌊 Market Breadth (Overall Sentiment)")
     total = len(df)
     if total > 0:
@@ -253,8 +226,6 @@ with tab1:
     st.divider()
     signal_type = st.radio("⚔️ **SIGNAL SELECTION:**", ["BUY (The Rebound)", "SELL (The Collapse)"], horizontal=True)
 
-    # 🛑 SENSOR OFFLINE: StochRSI and NVI are temporarily decoupled due to data feed inversion.
-    # 🟢 ACTIVE TELEMETRY: Relying strictly on MACD Structural Trend
     bullish_mask = (df['trend_15m'] == 'BULLISH')
     bearish_mask = (df['trend_15m'] == 'BEARISH')
     
@@ -276,34 +247,22 @@ with tab1:
     else:
         st.error("### 🚫 THE COUNCIL REMAINS SILENT: NO TRADE ZONE")
 
-    # --- THE FULL DATA VAULT ---
     st.divider()
     st.subheader("📁 The Full Data Vault")
-    st.markdown("Manually search the master ledger for specific stock alignments.")
-    
     search_query = st.text_input("🔍 Search Stock Symbol (e.g., RELIANCE, HDFC)", "").upper()
     vault_df = df[df['ticker'].str.contains(search_query, na=False)] if search_query else df
-    
-    st.dataframe(
-        vault_df[['ticker', 'latest_close', 'stochrsi_15m', 'smart_money_daily', 'trend_15m']], 
-        use_container_width=True, 
-        height=400
-    )
-
+    st.dataframe(vault_df[['ticker', 'latest_close', 'stochrsi_15m', 'smart_money_daily', 'trend_15m']], use_container_width=True, height=400)
     st.divider()
     st.caption(f"Last Vault Update: {filename}")
 
 # ------------------------------------------
-# TAB 2: THE X-RAY SANDBOX (Silver Layer)
+# TAB 2: THE X-RAY SANDBOX (With Dual Line Stoch RSI)
 # ------------------------------------------
 with tab2:
     st.subheader("🔬 Institutional Indicator X-Ray")
-    st.markdown("Dive into the raw mathematical momentum and accumulation of a specific asset across multiple timeframes.")
-    
     ctrl_col1, ctrl_col2 = st.columns([2, 1])
     with ctrl_col1:
         target_ticker = st.selectbox("Select Asset to Analyze:", df['ticker'].sort_values().unique())
-        
     with ctrl_col2:
         selected_tf_label = st.radio("Lens (Timeframe):", ["15m (Intraday)", "1h (Swing)", "1d (Macro)"], horizontal=True)
     
@@ -312,21 +271,17 @@ with tab2:
     
     if target_ticker:
         chart_df = load_silver_history(target_ticker, target_timeframe)
-        
         if not chart_df.empty:
             chart_df['macd_hist'] = chart_df['macd_black'] - chart_df['macd_red']
-            hist_colors = ['#26A69A' if val >= 0 else '#EF5350' for val in chart_df['macd_hist']]
-            
             chart_df['rsi_2_over'] = chart_df['rsi_2'].clip(lower=75)
             chart_df['rsi_2_under'] = chart_df['rsi_2'].clip(upper=20)
 
             fig = make_subplots(
-                rows=6, cols=1, shared_xaxes=True, 
-                vertical_spacing=0.03,
+                rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.03,
                 row_heights=[0.25, 0.15, 0.15, 0.15, 0.15, 0.15],
                 subplot_titles=(
                     f"{target_ticker} - Close Price", "MACD (12, 26, 9)", 
-                    "RSI (2) - Extreme Mean Reversion", "Stochastic RSI", 
+                    "RSI (2) - Extreme Mean Reversion", "Stochastic RSI (14, 14, 3, 3)", 
                     "RSI (14) - Structural Trend", "NVI - Institutional Flow"
                 )
             )
@@ -343,17 +298,18 @@ with tab2:
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_red'], name='Signal Line', line=dict(color='red', width=1.5)), row=2, col=1)
             
             # ROW 3: RSI (2)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=[75]*len(chart_df), mode='lines', line=dict(color='rgba(255,255,255,0)', width=0), hoverinfo='skip'), row=3, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=[75]*len(chart_df), mode='lines', line=dict(color='rgba(0,0,0,0)', width=0), hoverinfo='skip'), row=3, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2_over'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=[20]*len(chart_df), mode='lines', line=dict(color='rgba(255,255,255,0)', width=0), hoverinfo='skip'), row=3, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=[20]*len(chart_df), mode='lines', line=dict(color='rgba(0,0,0,0)', width=0), hoverinfo='skip'), row=3, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2_under'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2'], name='RSI(2)', line=dict(color='#FFA500', width=1.5)), row=3, col=1)
 
-            # ROW 4: STOCHASTIC RSI
-            fig.add_hrect(y0=20, y1=80, fillcolor="rgba(255, 100, 100, 0.1)", layer="below", line_width=0, row=4, col=1)
-            fig.add_hline(y=80, line_width=1, line_color="gray", row=4, col=1)
-            fig.add_hline(y=20, line_width=1, line_color="gray", row=4, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['stochrsi_k'], name='StochRSI', line=dict(color='#0055FF', width=1.5)), row=4, col=1)
+            # ROW 4: TRADINGVIEW PARITY STOCHASTIC RSI (%K vs %D)
+            fig.add_hrect(y0=20, y1=80, fillcolor="rgba(255, 100, 100, 0.05)", layer="below", line_width=0, row=4, col=1)
+            fig.add_hline(y=80, line_width=1, line_color="gray", line_dash="dash", row=4, col=1)
+            fig.add_hline(y=20, line_width=1, line_color="gray", line_dash="dash", row=4, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['stochrsi_k'], name='%K Line (Blue)', line=dict(color='#0055FF', width=1.5)), row=4, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['stochrsi_d'], name='%D Line (Orange)', line=dict(color='#FF9900', width=1.2, dash='dot')), row=4, col=1)
 
             # ROW 5: RSI (14)
             fig.add_hline(y=70, line_dash="dot", line_color="red", row=5, col=1)
@@ -366,44 +322,31 @@ with tab2:
 
             # VALUE BUBBLES
             last_date = chart_df['datetime'].iloc[-1]
-            last_stoch = chart_df['stochrsi_k'].iloc[-1]
-            if pd.notna(last_stoch):
-                fig.add_annotation(
-                    x=last_date, y=last_stoch, text=f"<b>{last_stoch:.2f}</b>",
-                    showarrow=False, xanchor='left', xshift=10, bgcolor="#0055FF", font=dict(color="white", size=11),
-                    borderpad=3, bordercolor="white", borderwidth=1, row=4, col=1
-                )
+            last_k = chart_df['stochrsi_k'].iloc[-1]
+            last_d = chart_df['stochrsi_d'].iloc[-1]
+            
+            if pd.notna(last_k):
+                fig.add_annotation(x=last_date, y=last_k, text=f"<b>K: {last_k:.1f}</b>", showarrow=False, xanchor='left', xshift=10, bgcolor="#0055FF", font=dict(color="white", size=10), borderpad=2, row=4, col=1)
+            if pd.notna(last_d):
+                fig.add_annotation(x=last_date, y=last_d, text=f"<b>D: {last_d:.1f}</b>", showarrow=False, xanchor='left', xshift=55, bgcolor="#FF9900", font=dict(color="white", size=10), borderpad=2, row=4, col=1)
 
             last_nvi_black = chart_df['nvi_black'].iloc[-1]
             last_nvi_red = chart_df['nvi_red'].iloc[-1]
             if pd.notna(last_nvi_black):
-                fig.add_annotation(
-                    x=last_date, y=last_nvi_black, text=f"<b>{last_nvi_black:.2f}</b>",
-                    showarrow=False, xanchor='left', xshift=10, bgcolor="white", font=dict(color="black", size=11),
-                    borderpad=3, bordercolor="black", borderwidth=1, row=6, col=1
-                )
+                fig.add_annotation(x=last_date, y=last_nvi_black, text=f"<b>{last_nvi_black:.2f}</b>", showarrow=False, xanchor='left', xshift=10, bgcolor="white", font=dict(color="black", size=11), borderpad=3, row=6, col=1)
             if pd.notna(last_nvi_red):
-                fig.add_annotation(
-                    x=last_date, y=last_nvi_red, text=f"<b>{last_nvi_red:.2f}</b>",
-                    showarrow=False, xanchor='left', xshift=10, bgcolor="#FF3333", font=dict(color="white", size=11),
-                    borderpad=3, bordercolor="white", borderwidth=1, row=6, col=1
-                )
+                fig.add_annotation(x=last_date, y=last_nvi_red, text=f"<b>{last_nvi_red:.2f}</b>", showarrow=False, xanchor='left', xshift=10, bgcolor="#FF3333", font=dict(color="white", size=11), borderpad=3, row=6, col=1)
 
-            # LAYOUT LOCKS & TIME-FOLDING FIX
             fig.update_layout(
                 height=1200, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                showlegend=False, margin=dict(l=0, r=60, t=30, b=0), dragmode='pan',
-                xaxis_rangeslider_visible=False, xaxis=dict(type="date")
+                showlegend=False, margin=dict(l=0, r=90, t=30, b=0), dragmode='pan', xaxis_rangeslider_visible=False, xaxis=dict(type="date")
             )
             fig.update_yaxes(fixedrange=True)
             
             if target_timeframe == '1d':
                 fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
             else:
-                fig.update_xaxes(rangebreaks=[
-                    dict(bounds=["sat", "mon"]),
-                    dict(bounds=[15.5, 9.25], pattern="hour") 
-                ])
+                fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"]), dict(bounds=[15.5, 9.25], pattern="hour")])
 
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom':False, 'displayModeBar': False})
         else:
