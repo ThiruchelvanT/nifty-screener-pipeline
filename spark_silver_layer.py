@@ -32,8 +32,10 @@ spark = SparkSession.builder \
 # ==========================================
 # 2. FETCH BRONZE DATA
 # ==========================================
-print("📥 Fetching Full Bronze Data...")
-df = spark.read.jdbc(url=jdbc_url, table="bronze_raw_ohlcv", properties=properties)
+print("📥 Fetching Bronze Data...")
+delta_query = "(SELECT * FROM bronze_raw_ohlcv WHERE datetime >= CURRENT_DATE - INTERVAL '400 days') as recent_bronze"
+
+df = spark.read.jdbc(url=jdbc_url, table=delta_query, properties=properties)
 
 # ==========================================
 # 3. DEFINE SCHEMA AND LOGIC
