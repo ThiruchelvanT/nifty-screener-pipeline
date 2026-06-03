@@ -1,12 +1,12 @@
 import os
 import pandas as pd
-import pandas_ta as ta
 from pyspark.sql import SparkSession
 import psycopg2
 
 # 1. Initialize the Radar (Starts the stopwatch and logs starting network bytes)
 from telemetry_radar import TelemetryRadar
 radar = TelemetryRadar()
+
 # ==========================================
 # 1. SETUP AND CREDENTIALS
 # ==========================================
@@ -22,7 +22,8 @@ jdbc_url = f"jdbc:postgresql://{NEON_HOST}:5432/neondb?sslmode=require"
 properties = {
     "user": "neondb_owner",
     "password": db_password,
-    "driver": "org.postgresql.Driver"
+    "driver": "org.postgresql.Driver",
+    "fetchsize": "10000"  # 🛡️ Network Armor: Forces streaming in chunks to protect RAM
 }
 
 print("🚀 Initializing Spark Session...")
@@ -37,7 +38,7 @@ spark = SparkSession.builder \
 # ==========================================
 print("📥 Fetching Bronze Data (Resolution-Optimized Window)...")
 
-# We fetch 400 days for Macro (1d), 60 days for Swing (1h), and 20 days for Intraday (15m)
+# We fetch 400 days for Macro (1d), and 20 days for Intraday (15m)
 delta_query = """(
     SELECT * FROM bronze_raw_ohlcv 
     WHERE timeframe = '1d' AND datetime >= CURRENT_DATE - INTERVAL '400 days'
@@ -169,6 +170,7 @@ def process_partition(pdf):
     # Return matching the exact structured Spark SQL schema constraints
     return pdf[['ticker', 'datetime', 'timeframe', 'open', 'high', 'low', 'close', 
                 'macd_black', 'macd_red', 'rsi_2', 'rsi_14', 'stochrsi_k', 'stochrsi_d', 'nvi_black', 'nvi_red']]
+
 # ==========================================
 # 4. EXECUTE SILVER TRANSFORMATION
 # ==========================================
@@ -249,28 +251,66 @@ try:
         print("No mature pending trades to settle.")
 
     # ------------------------------------------
-    # PHASE 2: THE CAPTURE
+    # PHASE 2: THE GRANDMASTER SNIPER PROTOCOL
     # ------------------------------------------
-    cursor.execute("SELECT ticker, latest_close FROM gold_screener_latest WHERE trend_15m = 'BULLISH';")
+    sniper_capture_query = """
+        WITH latest_1d AS (
+            SELECT ticker, nvi_black, nvi_red, rsi_14, macd_black, macd_red FROM (
+                SELECT ticker, nvi_black, nvi_red, rsi_14, macd_black, macd_red, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn
+                FROM silver_technical_indicators WHERE timeframe = '1d'
+            ) d WHERE rn = 1
+        ),
+        latest_15m AS (
+            SELECT ticker, close, rsi_2, stochrsi_k, macd_black, macd_red FROM (
+                SELECT ticker, close, rsi_2, stochrsi_k, macd_black, macd_red, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn
+                FROM silver_technical_indicators WHERE timeframe = '15m'
+            ) m WHERE rn = 1
+        )
+        SELECT m.ticker, m.close, 'GRANDMASTER_BULL' as signal_source
+        FROM latest_15m m
+        JOIN latest_1d d ON m.ticker = d.ticker
+        WHERE 
+          -- STEP 1: The Footprint (Institutions Accumulating)
+          d.nvi_black > d.nvi_red        
+          
+          -- STEP 2: The Value (Asset is cheap/flushed)
+          AND d.rsi_14 BETWEEN 30 AND 45     
+          
+          -- STEP 3: The Tide (Macro Trend is Bullish)
+          AND d.macd_black > d.macd_red      
+          
+          -- STEP 4: The Exhaustion (15m rubber band is maxed out near 0-5)
+          AND m.rsi_2 <= 5.0                 
+          AND m.stochrsi_k <= 5.0            
+          
+          -- STEP 5: The Trigger (15m Momentum just crossed upward from a dip)
+          AND m.macd_black > m.macd_red      
+          AND m.macd_black < 0               
+    """
+
+    cursor.execute(sniper_capture_query)
     todays_bulls = cursor.fetchall()
     
     if todays_bulls:
-        print(f"Capturing {len(todays_bulls)} new Elite Bulls for tomorrow's settlement...")
+        print(f"🎯 SNIPER LOCK: Capturing {len(todays_bulls)} Grandmaster Setups for tomorrow's settlement...")
         for bull in todays_bulls:
-            ticker, close_price = bull
+            ticker, close_price, signal_source = bull
+            
             cursor.execute(f"""
                 SELECT COUNT(*) FROM gold_signal_ledger 
-                WHERE ticker = '{ticker}' AND DATE(signal_date) = CURRENT_DATE AND verdict = 'PENDING';
+                WHERE ticker = '{ticker}' 
+                  AND DATE(signal_date) = CURRENT_DATE 
+                  AND verdict = 'PENDING';
             """)
             is_duplicate = cursor.fetchone()[0] > 0
             
             if not is_duplicate:
                 cursor.execute(f"""
                     INSERT INTO gold_signal_ledger (ticker, signal_date, signal_type, entry_price, target_timeframe, verdict)
-                    VALUES ('{ticker}', NOW(), 'BULLISH', {close_price}, '1d', 'PENDING');
+                    VALUES ('{ticker}', NOW(), '{signal_source}', {close_price}, '1d', 'PENDING');
                 """)
     else:
-        print("No Elite Bulls found today. The Council remains silent.")
+        print("🛡️ No Grandmaster Confluence found today. The capital remains perfectly protected.")
 
     cursor.close()
     conn.close()
