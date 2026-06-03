@@ -172,9 +172,6 @@ def process_partition(pdf):
 print("⚙️ Calculating Technical Indicators for entire dataset...")
 silver_df = df.groupBy("ticker", "timeframe").applyInPandas(process_partition, schema=silver_schema)
 
-print("📊 Transformation Complete! Here is a sample:")
-silver_df.filter("macd_black IS NOT NULL").show(10, truncate=False)
-
 # ==========================================
 # 5. WRITE TO NEON DB
 # ==========================================
