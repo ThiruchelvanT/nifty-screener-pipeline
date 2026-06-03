@@ -251,9 +251,10 @@ try:
         print("No mature pending trades to settle.")
 
     # ------------------------------------------
-    # PHASE 2: THE GRANDMASTER SNIPER PROTOCOL
+    # PHASE 2: THE GRANDMASTER SCORING ENGINE
     # ------------------------------------------
-    sniper_capture_query = """
+    
+    scoring_capture_query = """
         WITH latest_1d AS (
             SELECT ticker, nvi_black, nvi_red, rsi_14, macd_black, macd_red FROM (
                 SELECT ticker, nvi_black, nvi_red, rsi_14, macd_black, macd_red, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn
@@ -265,36 +266,44 @@ try:
                 SELECT ticker, close, rsi_2, stochrsi_k, macd_black, macd_red, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn
                 FROM silver_technical_indicators WHERE timeframe = '15m'
             ) m WHERE rn = 1
+        ),
+        scored_stocks AS (
+            SELECT 
+                m.ticker, 
+                m.close,
+                -- STEP 1: The Footprint (35 points)
+                CASE WHEN d.nvi_black > d.nvi_red THEN 35 ELSE 0 END AS score_nvi,
+                
+                -- STEP 2: The Value (20 points)
+                CASE WHEN d.rsi_14 BETWEEN 30 AND 45 THEN 20 ELSE 0 END AS score_rsi_1d,
+                
+                -- STEP 3: The Tide (15 points)
+                CASE WHEN d.macd_black >= d.macd_red THEN 15 ELSE 0 END AS score_macd_1d,
+                
+                -- STEP 4: The Exhaustion (15 points - Note: using < 1.0 for StochRSI zero-float safety)
+                CASE WHEN m.rsi_2 < 5.0 AND m.stochrsi_k < 1.0 THEN 15 ELSE 0 END AS score_exhaust,
+                
+                -- STEP 5: The Trigger (15 points)
+                CASE WHEN m.macd_black > m.macd_red AND m.macd_black < 0 THEN 15 ELSE 0 END AS score_trigger
+            FROM latest_15m m
+            JOIN latest_1d d ON m.ticker = d.ticker
         )
-        SELECT m.ticker, m.close, 'GRANDMASTER_BULL' as signal_source
-        FROM latest_15m m
-        JOIN latest_1d d ON m.ticker = d.ticker
-        WHERE 
-          -- STEP 1: The Footprint (Institutions Accumulating)
-          d.nvi_black > d.nvi_red        
-          
-          -- STEP 2: The Value (Asset is cheap/flushed)
-          AND d.rsi_14 BETWEEN 30 AND 45     
-          
-          -- STEP 3: The Tide (Macro Trend is Bullish)
-          AND d.macd_black > d.macd_red      
-          
-          -- STEP 4: The Exhaustion (15m rubber band is maxed out near 0-5)
-          AND m.rsi_2 <= 5.0                 
-          AND m.stochrsi_k <= 5.0            
-          
-          -- STEP 5: The Trigger (15m Momentum just crossed upward from a dip)
-          AND m.macd_black > m.macd_red      
-          AND m.macd_black < 0               
+        -- AGGREGATION & EXECUTION THRESHOLD
+        SELECT 
+            ticker, 
+            close, 
+            (score_nvi + score_rsi_1d + score_macd_1d + score_exhaust + score_trigger) as grandmaster_score
+        FROM scored_stocks
+        WHERE (score_nvi + score_rsi_1d + score_macd_1d + score_exhaust + score_trigger) >= 70
     """
 
-    cursor.execute(sniper_capture_query)
+    cursor.execute(scoring_capture_query)
     todays_bulls = cursor.fetchall()
     
     if todays_bulls:
-        print(f"🎯 SNIPER LOCK: Capturing {len(todays_bulls)} Grandmaster Setups for tomorrow's settlement...")
+        print(f"🎯 EXECUTION THRESHOLD CROSSED: Capturing {len(todays_bulls)} setups...")
         for bull in todays_bulls:
-            ticker, close_price, signal_source = bull
+            ticker, close_price, score = bull
             
             cursor.execute(f"""
                 SELECT COUNT(*) FROM gold_signal_ledger 
@@ -305,12 +314,14 @@ try:
             is_duplicate = cursor.fetchone()[0] > 0
             
             if not is_duplicate:
+                # We save the score as part of the signal_type string so you can see how strong it was
+                signal_tag = f"GM_SCORE_{score}" 
                 cursor.execute(f"""
                     INSERT INTO gold_signal_ledger (ticker, signal_date, signal_type, entry_price, target_timeframe, verdict)
-                    VALUES ('{ticker}', NOW(), '{signal_source}', {close_price}, '1d', 'PENDING');
+                    VALUES ('{ticker}', NOW(), '{signal_tag}', {close_price}, '1d', 'PENDING');
                 """)
     else:
-        print("🛡️ No Grandmaster Confluence found today. The capital remains perfectly protected.")
+        print("🛡️ No stocks crossed the 70-point execution threshold today. Cash Mode engaged.")
 
     cursor.close()
     conn.close()
