@@ -4,6 +4,9 @@ import pandas_ta as ta
 from pyspark.sql import SparkSession
 import psycopg2
 
+# 1. Initialize the Radar (Starts the stopwatch and logs starting network bytes)
+from telemetry_radar import TelemetryRadar
+radar = TelemetryRadar()
 # ==========================================
 # 1. SETUP AND CREDENTIALS
 # ==========================================
@@ -274,3 +277,6 @@ try:
     print("Forward-Testing Ledger updated successfully.")
 except Exception as e:
     print(f"CRITICAL ERROR in Ledger Protocol: {e}")
+
+# 2. Shut down the Radar and print the final report
+radar.shutdown_and_report()
