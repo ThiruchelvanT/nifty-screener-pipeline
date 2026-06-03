@@ -7,3 +7,5 @@ streamlit
 psycopg2-binary
 SQLAlchemy
 plotly
+pyspark
+psutil
