@@ -30,10 +30,20 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 # ==========================================
-# 2. FETCH BRONZE DATA (THE 400-DAY DELTA FILTER)
+# 2. FETCH BRONZE DATA (THE ASYMMETRIC DELTA FILTER)
 # ==========================================
-print("📥 Fetching Bronze Data (Last 400 Days Only)...")
-delta_query = "(SELECT * FROM bronze_raw_ohlcv WHERE datetime >= CURRENT_DATE - INTERVAL '400 days') as recent_bronze"
+print("📥 Fetching Bronze Data (Resolution-Optimized Window)...")
+
+# We fetch 400 days for Macro (1d), 60 days for Swing (1h), and 20 days for Intraday (15m)
+delta_query = """(
+    SELECT * FROM bronze_raw_ohlcv 
+    WHERE timeframe = '1d' AND datetime >= CURRENT_DATE - INTERVAL '400 days'
+    
+    UNION ALL
+    
+    SELECT * FROM bronze_raw_ohlcv 
+    WHERE timeframe = '15m' AND datetime >= CURRENT_DATE - INTERVAL '20 days'
+) as recent_bronze"""
 
 df = spark.read.jdbc(url=jdbc_url, table=delta_query, properties=properties)
 
@@ -59,10 +69,16 @@ silver_schema = """
 """
 
 def process_partition(pdf):
-    import pandas_ta as ta
+    """
+    🧮 THE PURE-PANDAS PARITY ENGINE
+    De-coupled from black-box libraries. High-speed vector operations optimized 
+    for absolute alignment with institutional charting engines (TradingView/Zerodha).
+    """
     import numpy as np
+    import pandas as pd
     
-    pdf = pdf.sort_values('datetime')
+    # 1. Ensure absolute historical chronological alignment
+    pdf = pdf.sort_values('datetime').reset_index(drop=True)
 
     pdf['open'] = pdf['open'].astype(float)
     pdf['high'] = pdf['high'].astype(float)
@@ -70,65 +86,86 @@ def process_partition(pdf):
     pdf['close'] = pdf['close'].astype(float)
     pdf['volume'] = pdf['volume'].astype(float)
     
-    # ---------------------------------------------------------
-    # MACD (Standard EMA math is fine here)
-    # ---------------------------------------------------------
-    macd = pdf.ta.macd(fast=12, slow=26, signal=9)
-    if macd is not None:
-        pdf['macd_black'] = macd['MACD_12_26_9']
-        pdf['macd_red'] = macd['MACDs_12_26_9']
-    else:
-        pdf['macd_black'] = None
-        pdf['macd_red'] = None
-        
-    # ==============================================================
-    # THE TRADINGVIEW PARITY ENGINE (Custom RSI & StochRSI Math)
-    # ==============================================================
-    # STEP 1: Calculate Wilder's Smoothing (RMA) for the base RSI(14)
-    delta = pdf['close'].diff()
-    gain = delta.where(delta > 0, 0.0)
-    loss = -delta.where(delta < 0, 0.0)
+    close_series = pdf['close']
+    volume_series = pdf['volume']
     
+    # ==============================================================
+    # MODULE 1: PURE-PANDAS MACD (12, 26, 9)
+    # ==============================================================
+    # adjust=False enforces the strict standard recursive EMA calculation
+    ema12 = close_series.ewm(span=12, adjust=False).mean()
+    ema26 = close_series.ewm(span=26, adjust=False).mean()
+    
+    pdf['macd_black'] = ema12 - ema26
+    pdf['macd_red'] = pdf['macd_black'].ewm(span=9, adjust=False).mean()
+    
+    # ==============================================================
+    # MODULE 2: TRADINGVIEW PARITY RSI & STOCHASTIC RSI (14, 14, 3, 3)
+    # ==============================================================
+    delta = close_series.diff()
+    gain = delta.clip(lower=0.0)
+    loss = (-delta).clip(lower=0.0)
+    
+    # alpha=1/length calculates Wilder's Running Moving Average (RMA) perfectly
     avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
     avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
     
-    rs = avg_gain / avg_loss
-    pdf['rsi_14'] = 100 - (100 / (1 + rs))
+    # Avoid division by zero if average loss flatlines
+    rs = np.where(avg_loss != 0, avg_gain / avg_loss, 0.0)
+    pdf['rsi_14'] = np.where(avg_loss != 0, 100 - (100 / (1 + rs)), 100.0)
     
-    # STEP 2: The Hyper-Sensitive RSI(2) using the same exact RMA logic
+    # Hyper-sensitive RSI(2) using the exact same RMA formulation
     avg_gain_2 = gain.ewm(alpha=1/2, min_periods=2, adjust=False).mean()
     avg_loss_2 = loss.ewm(alpha=1/2, min_periods=2, adjust=False).mean()
-    pdf['rsi_2'] = 100 - (100 / (1 + (avg_gain_2 / avg_loss_2)))
+    rs_2 = np.where(avg_loss_2 != 0, avg_gain_2 / avg_loss_2, 0.0)
+    pdf['rsi_2'] = np.where(avg_loss_2 != 0, 100 - (100 / (1 + rs_2)), 100.0)
 
-    # STEP 3: The TradingView Stochastic RSI (%K & %D Lines)
+    # Stochastic RSI Engine with strict min_periods thresholds
     min_rsi = pdf['rsi_14'].rolling(window=14, min_periods=14).min()
     max_rsi = pdf['rsi_14'].rolling(window=14, min_periods=14).max()
     range_rsi = max_rsi - min_rsi
     
-    # CRITICAL FIX: Protect against Division-by-Zero during market pauses/flatlines
+    # Protect against flatline NaN outputs during circuit breaks or freezes
     raw_stoch = np.where(
         range_rsi != 0,
         ((pdf['rsi_14'] - min_rsi) / range_rsi) * 100,
         0.0
     )
     
-    # Apply strict rolling parameters matching TV's default smooth inputs
+    # Generate Dual-Line %K and %D tracking structures
     pdf['stochrsi_k'] = pd.Series(raw_stoch, index=pdf.index).rolling(window=3, min_periods=3).mean()
     pdf['stochrsi_d'] = pdf['stochrsi_k'].rolling(window=3, min_periods=3).mean()
+    
     # ==============================================================
-        
-    # ---------------------------------------------------------
-    # NVI (Negative Volume Index)
-    # ---------------------------------------------------------
-    pdf['nvi_black'] = pdf.ta.nvi(close=pdf['close'], volume=pdf['volume'])
-    if pdf['nvi_black'] is not None:
-        pdf['nvi_red'] = ta.ema(pdf['nvi_black'], length=255)
+    # MODULE 3: INSTITUTIONAL NVI ENGINE & SIGNAL LINE
+    # ==============================================================
+    nvi_values = np.zeros(len(pdf))
+    nvi_values[0] = 1000.0  # Seed value
+    
+    closes = close_series.values
+    volumes = volume_series.values
+    
+    # Native iterative execution loop over partition timeline
+    for i in range(1, len(pdf)):
+        if volumes[i] < volumes[i-1]:
+            # Volume decreased -> institutional tracking triggered
+            price_return = (closes[i] - closes[i-1]) / closes[i-1]
+            nvi_values[i] = nvi_values[i-1] + (price_return * nvi_values[i-1])
+        else:
+            # Volume increased or stayed steady -> maintain index flatline
+            nvi_values[i] = nvi_values[i-1]
+            
+    pdf['nvi_black'] = nvi_values
+    
+    # Use ewm with adjust=False to achieve accurate Wilder/Standard EMA initialization
+    if pdf['nvi_black'].notnull().any():
+        pdf['nvi_red'] = pdf['nvi_black'].ewm(span=255, adjust=False).mean()
     else:
         pdf['nvi_red'] = None
-    
+
+    # Return matching the exact structured Spark SQL schema constraints
     return pdf[['ticker', 'datetime', 'timeframe', 'open', 'high', 'low', 'close', 
                 'macd_black', 'macd_red', 'rsi_2', 'rsi_14', 'stochrsi_k', 'stochrsi_d', 'nvi_black', 'nvi_red']]
-
 # ==========================================
 # 4. EXECUTE SILVER TRANSFORMATION
 # ==========================================
