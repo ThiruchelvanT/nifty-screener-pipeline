@@ -41,12 +41,12 @@ print("📥 Fetching Bronze Data (Resolution-Optimized Window)...")
 # We fetch 400 days for Macro (1d), and 20 days for Intraday (15m)
 delta_query = """(
     SELECT * FROM bronze_raw_ohlcv 
-    WHERE timeframe = '1d' AND datetime >= CURRENT_DATE - INTERVAL '400 days'
+    WHERE timeframe = '1d' AND datetime >= CURRENT_DATE - INTERVAL '365 days'
     
     UNION ALL
     
     SELECT * FROM bronze_raw_ohlcv 
-    WHERE timeframe = '15m' AND datetime >= CURRENT_DATE - INTERVAL '20 days'
+    WHERE timeframe = '15m' AND datetime >= CURRENT_DATE - INTERVAL '14 days'
 ) as recent_bronze"""
 
 df = spark.read.jdbc(url=jdbc_url, table=delta_query, properties=properties)
