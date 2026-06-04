@@ -57,19 +57,24 @@ def load_active_portfolio():
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
+        # We use a CTE to explicitly grab ONLY the absolute latest price from the macro table
         query = """
+            WITH latest_macro AS (
+                SELECT ticker, close 
+                FROM (
+                    SELECT ticker, close, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn 
+                    FROM silver_1d_macro
+                ) sub WHERE rn = 1
+            )
             SELECT 
                 g.ticker AS "Ticker",
                 g.signal_type AS "Strategy",
                 TO_CHAR(g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY') AS "Entry Date",
                 ROUND(g.entry_price::numeric, 2) AS "Entry Price",
                 ROUND(s.close::numeric, 2) AS "Current Price",
-                
-                -- THE FIX: Wrap the entire math equation in parentheses and cast to ::numeric before rounding
                 ROUND( (((s.close - g.entry_price) / g.entry_price) * 100)::numeric, 2 ) AS "Unrealized PNL (%)"
-                
             FROM gold_signal_ledger g
-            JOIN silver_1d_macro s ON g.ticker = s.ticker
+            JOIN latest_macro s ON g.ticker = s.ticker
             WHERE g.verdict = 'PENDING' AND g.target_timeframe = '1d'
             ORDER BY ((s.close - g.entry_price) / g.entry_price) DESC;
         """
