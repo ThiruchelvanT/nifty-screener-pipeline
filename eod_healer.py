@@ -112,6 +112,53 @@ macro_df.write.jdbc(
     mode="overwrite", 
     properties=write_props
 )
-
 print("✅ Concrete Poured. silver_1d_macro table successfully created and updated.")
 spark.stop()
+
+# ==========================================
+# 3. THE CLEARING HOUSE (Trade Settlement)
+# ==========================================
+print("🏦 Waking the Clearing House. Settling pending trades...")
+try:
+    conn = psycopg2.connect(host=NEON_HOST, database="neondb", user="neondb_owner", password=db_password, port="5432")
+    conn.autocommit = True
+    cursor = conn.cursor()
+    
+    # This SQL instantly joins the Gold Ledger to your fresh Silver Macro table
+    # It calculates the PNL% and sets WIN/LOSS for any trade older than today
+    settlement_query = """
+        UPDATE gold_signal_ledger g
+        SET 
+            settlement_date = NOW(),
+            settlement_price = s.close,
+            pnl_percentage = ROUND(((s.close - g.entry_price) / g.entry_price) * 100::numeric, 2),
+            verdict = CASE WHEN s.close > g.entry_price THEN 'WIN' ELSE 'LOSS' END
+        FROM silver_1d_macro s
+        WHERE g.ticker = s.ticker 
+          AND g.verdict = 'PENDING' 
+          AND (
+              -- EXIT RULE 1: INTRADAY SQUARE-OFF
+              -- Any 15m trade opened today gets forcefully closed at EOD today.
+              (g.target_timeframe = '15m' AND DATE(g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE)
+              
+              OR
+              
+              -- EXIT RULE 2: LONG-TERM STRUCTURAL BREAK
+              -- A 1D trade stays open for weeks/months. It ONLY closes if the Institutional NVI turns Bearish (Black crosses below Red).
+              (g.target_timeframe = '1d' AND s.nvi_black < s.nvi_red AND DATE(g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') < CURRENT_DATE)
+          );
+    """
+    
+    cursor.execute(settlement_query)
+    settled_count = cursor.rowcount
+    
+    if settled_count > 0:
+        print(f"⚖️ Settlement Complete: {settled_count} trades have been closed and logged.")
+    else:
+        print("🛡️ No mature pending trades to settle today.")
+
+except Exception as e:
+    print(f"❌ Clearing House failed: {e}")
+finally:
+    if 'cursor' in locals(): cursor.close()
+    if 'conn' in locals(): conn.close()
