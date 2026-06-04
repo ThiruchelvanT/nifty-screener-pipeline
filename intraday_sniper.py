@@ -25,42 +25,55 @@ print("📥 Fetching micro-batch (2 MB payload)...")
 query = "(SELECT * FROM bronze_raw_ohlcv WHERE timeframe = '15m' AND datetime >= CURRENT_DATE - INTERVAL '3 days') as micro_bronze"
 df = spark.read.jdbc(url=jdbc_url, table=query, properties=properties)
 
-silver_schema = "ticker string, datetime timestamp, timeframe string, close double, macd_black double, macd_red double, rsi_2 double, rsi_14 double, stochrsi_k double"
+silver_schema = "ticker string, datetime timestamp, timeframe string, close double, macd_black double, macd_red double, rsi_2 double, rsi_14 double, stochrsi_k double, stochrsi_d double"
 
 def process_micro_partition(pdf):
+    """
+    🎯 THE SNIPER ENGINE (MICRO)
+    Hyper-optimized for speed. Stripped of all loops. Pure vector momentum math.
+    """
+    import numpy as np
+    import pandas as pd
+    
     pdf = pdf.sort_values('datetime').reset_index(drop=True)
     pdf['close'] = pdf['close'].astype(float)
+    
     close_series = pdf['close']
     
-    # Fast MACD
+    # --- 1. FAST MACD ---
     ema12 = close_series.ewm(span=12, adjust=False).mean()
     ema26 = close_series.ewm(span=26, adjust=False).mean()
     pdf['macd_black'] = ema12 - ema26
     pdf['macd_red'] = pdf['macd_black'].ewm(span=9, adjust=False).mean()
     
-    # Fast RSI & StochRSI
+    # --- 2. FAST RSI & STOCHASTIC RSI ---
     delta = close_series.diff()
     gain = delta.clip(lower=0.0)
     loss = (-delta).clip(lower=0.0)
     
+    # Base RSI 14 (Required for StochRSI math)
     avg_gain_14 = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
     avg_loss_14 = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
     rs_14 = np.where(avg_loss_14 != 0, avg_gain_14 / avg_loss_14, 0.0)
     pdf['rsi_14'] = np.where(avg_loss_14 != 0, 100 - (100 / (1 + rs_14)), 100.0)
     
+    # Hyper-sensitive RSI 2
     avg_gain_2 = gain.ewm(alpha=1/2, min_periods=2, adjust=False).mean()
     avg_loss_2 = loss.ewm(alpha=1/2, min_periods=2, adjust=False).mean()
     rs_2 = np.where(avg_loss_2 != 0, avg_gain_2 / avg_loss_2, 0.0)
     pdf['rsi_2'] = np.where(avg_loss_2 != 0, 100 - (100 / (1 + rs_2)), 100.0)
 
+    # Stochastic RSI K & D Lines
     min_rsi = pdf['rsi_14'].rolling(window=14, min_periods=14).min()
     max_rsi = pdf['rsi_14'].rolling(window=14, min_periods=14).max()
     range_rsi = max_rsi - min_rsi
     
     raw_stoch = np.where(range_rsi != 0, ((pdf['rsi_14'] - min_rsi) / range_rsi) * 100, 0.0)
-    pdf['stochrsi_k'] = pd.Series(raw_stoch, index=pdf.index).rolling(window=3, min_periods=3).mean()
     
-    return pdf[['ticker', 'datetime', 'timeframe', 'close', 'macd_black', 'macd_red', 'rsi_2', 'rsi_14', 'stochrsi_k']]
+    pdf['stochrsi_k'] = pd.Series(raw_stoch, index=pdf.index).rolling(window=3, min_periods=3).mean()
+    pdf['stochrsi_d'] = pdf['stochrsi_k'].rolling(window=3, min_periods=3).mean()
+    
+    return pdf[['ticker', 'datetime', 'timeframe', 'close', 'macd_black', 'macd_red', 'rsi_2', 'rsi_14', 'stochrsi_k', 'stochrsi_d']]
 
 # ==========================================
 # 2. TRANSFORM & WRITE (To the Micro Table)
