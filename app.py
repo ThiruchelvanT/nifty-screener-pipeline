@@ -50,6 +50,33 @@ def load_ledger_scoreboard():
     except Exception as e:
         return pd.DataFrame()
 
+@st.cache_data(ttl=60) # ⚡ Fast Cache for Live Portfolio
+def load_active_portfolio():
+    try:
+        conn = psycopg2.connect(
+            host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
+            user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
+        )
+        query = """
+            SELECT 
+                g.ticker AS "Ticker",
+                g.signal_type AS "Strategy",
+                TO_CHAR(g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY') AS "Entry Date",
+                ROUND(g.entry_price::numeric, 2) AS "Entry Price",
+                ROUND(s.close::numeric, 2) AS "Current Price",
+                ROUND(((s.close - g.entry_price) / g.entry_price) * 100::numeric, 2) AS "Unrealized PNL (%)"
+            FROM gold_signal_ledger g
+            JOIN silver_1d_macro s ON g.ticker = s.ticker
+            WHERE g.verdict = 'PENDING' AND g.target_timeframe = '1d'
+            ORDER BY ((s.close - g.entry_price) / g.entry_price) DESC;
+        """
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+    except Exception as e:
+        st.error(f"Failed to load active portfolio: {e}")
+        return pd.DataFrame()
+
 @st.cache_data(ttl=300) 
 def get_global_indices():
     indices = {
@@ -187,7 +214,9 @@ for index in global_data:
 # 5. MAIN UI (Tabs)
 # ==========================================
 st.title("⚖️ The Market Oracle")
-tab1, tab2 = st.tabs(["📊 The Screener", "📈 The X-Ray Sandbox"])
+
+# 🏛️ NEW: Added Tab 3 for Active Portfolio
+tab1, tab2, tab3 = st.tabs(["📊 The Screener", "📈 The X-Ray Sandbox", "🟢 Active Portfolio"])
 
 # ------------------------------------------
 # TAB 1: THE SCREENER (Gold Layer)
@@ -351,3 +380,42 @@ with tab2:
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom':False, 'displayModeBar': False})
         else:
             st.warning("Historical data is still warming up for this asset.")
+
+# ------------------------------------------
+# TAB 3: THE ACTIVE PORTFOLIO (Live Ledger)
+# ------------------------------------------
+with tab3:
+    st.subheader("🟢 Active Long-Term Campaigns")
+    
+    # Render the Live Portfolio DataFrame
+    df_portfolio = load_active_portfolio()
+    
+    if not df_portfolio.empty:
+        # Calculate Total Portfolio Health
+        avg_pnl = df_portfolio["Unrealized PNL (%)"].mean()
+        
+        # Display Top-Level Metrics
+        col1, col2 = st.columns(2)
+        col1.metric("Open Positions", len(df_portfolio))
+        col2.metric("Average Unrealized PNL", f"{avg_pnl:.2f}%", 
+                    delta="Profitable" if avg_pnl > 0 else "Drawdown", 
+                    delta_color="normal" if avg_pnl > 0 else "inverse")
+        
+        st.divider()
+        
+        # Function to color the PNL column conditionally
+        def color_pnl(val):
+            color = '#26A69A' if val > 0 else '#EF5350' if val < 0 else 'gray'
+            return f'color: {color}; font-weight: bold;'
+        
+        # Apply Pandas Styler map for dynamic UI rendering
+        styled_df = df_portfolio.style.map(color_pnl, subset=["Unrealized PNL (%)"])
+        
+        # Display in Streamlit
+        st.dataframe(
+            styled_df,
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("🛡️ No active long-term positions open. The vault is securely holding cash and waiting for perfect setups.")
