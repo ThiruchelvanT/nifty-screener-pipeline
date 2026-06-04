@@ -126,14 +126,23 @@ try:
     
     # This SQL instantly joins the Gold Ledger to your fresh Silver Macro table
     # It calculates the PNL% and sets WIN/LOSS for any trade older than today
+    # This SQL instantly joins the Gold Ledger to the absolute latest row in your Silver Macro table
     settlement_query = """
         UPDATE gold_signal_ledger g
         SET 
             settlement_date = NOW(),
             settlement_price = s.close,
-            pnl_percentage = ROUND(((s.close - g.entry_price) / g.entry_price) * 100::numeric, 2),
+            -- THE TYPING FIX: Cast the entire output to numeric before rounding
+            pnl_percentage = ROUND( (((s.close - g.entry_price) / g.entry_price) * 100)::numeric, 2 ),
             verdict = CASE WHEN s.close > g.entry_price THEN 'WIN' ELSE 'LOSS' END
-        FROM silver_1d_macro s
+        FROM (
+            -- THE ARMOR: Force the database to ONLY use today's latest closing metrics
+            SELECT ticker, close, nvi_black, nvi_red, macd_black, macd_red, rsi_14 
+            FROM (
+                SELECT *, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn 
+                FROM silver_1d_macro
+            ) sub WHERE rn = 1
+        ) s
         WHERE g.ticker = s.ticker 
           AND g.verdict = 'PENDING' 
           AND (
@@ -143,8 +152,8 @@ try:
               
               OR
               
-              -- EXIT RULE 2: LONG-TERM STRUCTURAL BREAK
-              -- A 1D trade stays open for weeks/months. It ONLY closes if the Institutional NVI turns Bearish (Black crosses below Red).
+              -- EXIT RULE 2: THE LONG-TERM EJECTION SEAT
+              -- A 1D trade stays open for weeks. It ONLY closes if the macro tide reverses.
               (
                   g.target_timeframe = '1d' 
                   AND (s.macd_black < s.macd_red OR s.rsi_14 < 40) 
