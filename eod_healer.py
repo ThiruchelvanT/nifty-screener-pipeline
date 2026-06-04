@@ -145,7 +145,11 @@ try:
               
               -- EXIT RULE 2: LONG-TERM STRUCTURAL BREAK
               -- A 1D trade stays open for weeks/months. It ONLY closes if the Institutional NVI turns Bearish (Black crosses below Red).
-              (g.target_timeframe = '1d' AND s.nvi_black < s.nvi_red AND DATE(g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') < CURRENT_DATE)
+              (
+                  g.target_timeframe = '1d' 
+                  AND (s.macd_black < s.macd_red OR s.rsi_14 < 40) 
+                  AND DATE(g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') < CURRENT_DATE
+              )
           );
     """
     
