@@ -64,7 +64,10 @@ def load_active_portfolio():
                 TO_CHAR(g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY') AS "Entry Date",
                 ROUND(g.entry_price::numeric, 2) AS "Entry Price",
                 ROUND(s.close::numeric, 2) AS "Current Price",
-                ROUND(((s.close - g.entry_price) / g.entry_price) * 100::numeric, 2) AS "Unrealized PNL (%)"
+                
+                -- THE FIX: Wrap the entire math equation in parentheses and cast to ::numeric before rounding
+                ROUND( (((s.close - g.entry_price) / g.entry_price) * 100)::numeric, 2 ) AS "Unrealized PNL (%)"
+                
             FROM gold_signal_ledger g
             JOIN silver_1d_macro s ON g.ticker = s.ticker
             WHERE g.verdict = 'PENDING' AND g.target_timeframe = '1d'
