@@ -1,7 +1,9 @@
 name: 🎯 Test Intraday Sniper
 
 on:
-  workflow_dispatch: # This gives you a manual "Run" button in GitHub
+  workflow_dispatch: # Keeps manual button
+  repository_dispatch:
+    types: [trigger-sniper] # The secret password for the Webhook
 
 jobs:
   run-sniper:
