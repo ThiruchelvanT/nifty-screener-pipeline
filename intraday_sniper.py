@@ -82,7 +82,11 @@ print("⚙️ Calculating high-speed triggers...")
 micro_df = df.groupBy("ticker").applyInPandas(process_micro_partition, schema=silver_schema)
 
 write_props = properties.copy()
-write_props["truncate"] = "true"
+
+# =======================================================================
+# THE ARCHITECT'S FIX: Set to "false" to drop and recreate the table schema
+# =======================================================================
+write_props["truncate"] = "false" 
 
 micro_df.write.jdbc(
     url=jdbc_url, 
