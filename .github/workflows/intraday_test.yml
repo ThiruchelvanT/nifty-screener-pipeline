@@ -1,19 +1,21 @@
-name: 🎯 Test Intraday Sniper
+name: 🎯 Intraday Sniper Pulse
 
 on:
-  workflow_dispatch: # Keeps manual button
+  workflow_dispatch: # Keeps manual button for testing
   repository_dispatch:
-    types: [trigger-sniper] # The secret password for the Webhook
+    types: [trigger-sniper] # The secret password for the cron-job.org Webhook
 
 jobs:
   run-sniper:
     runs-on: ubuntu-latest 
     steps:
       - uses: actions/checkout@v4
+      
       - uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
+          
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -26,8 +28,21 @@ jobs:
       - name: 📦 Install Stack
         run: |
           python -m pip install --upgrade pip
-          pip install pyspark==3.5.1 numpy==1.26.4 pandas==2.1.4 psycopg2-binary pyarrow
+          # Added yfinance, sqlalchemy, and requests to support the Bronze Ingestion engine
+          pip install pyspark==3.5.1 numpy==1.26.4 pandas==2.1.4 psycopg2-binary pyarrow yfinance sqlalchemy requests
           
+      # ==========================================
+      # STEP 1: THE INGESTION (Featherweight Pull)
+      # ==========================================
+      - name: 📡 Run Guerrilla Bronze Ingestion (15m)
+        env:
+          NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
+        # The --intraday flag tells the script to use evasion tactics and only sip recent data
+        run: python -u bronze_ingestion.py --intraday
+          
+      # ==========================================
+      # STEP 2: THE EXECUTION (Fire the Sniper)
+      # ==========================================
       - name: 🎯 Execute Sniper Engine
         env:
           NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
