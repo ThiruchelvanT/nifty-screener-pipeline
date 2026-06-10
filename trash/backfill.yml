@@ -1,0 +1,26 @@
+name: 🚨 V2 Historical Backfill (Manual Trigger)
+
+on:
+  workflow_dispatch: # This creates a "Run Workflow" button in GitHub
+
+jobs:
+  run-backfill:
+    runs-on: ubuntu-latest 
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Data Engineering Stack
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas yfinance sqlalchemy psycopg2-binary requests
+
+      - name: Run The Great Reset
+        env:
+          NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
+        run: python historical_backfill.py

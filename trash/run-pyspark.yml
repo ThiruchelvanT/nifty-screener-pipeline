@@ -1,0 +1,43 @@
+name: Daily Bronze Data Ingestion Pipeline
+
+on:
+  schedule:
+    # Trigger automatically every single day at 16:00 UTC (9:30 PM IST)
+    # - cron: '0 16 * * *'
+  workflow_dispatch:
+    # Allows you to manually click "Run workflow" in GitHub UI anytime for testing
+
+jobs:
+  spark-ingest:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository Code
+      uses: actions/checkout@v3
+
+    - name: Set up Java Development Kit (Required for PySpark)
+      uses: actions/setup-java@v3
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+
+    - name: Set up Python Environment
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+
+    - name: Install PySpark and API Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyspark==3.3.4 yfinance pandas
+
+    - name: Execute PySpark Bronze Ingestion Pipeline
+      env:
+        # Secure credentials loaded dynamically from GitHub repository configuration
+        STORAGE_ENDPOINT: ${{ secrets.STORAGE_ENDPOINT }}
+        STORAGE_ACCESS_KEY: ${{ secrets.STORAGE_ACCESS_KEY }}
+        STORAGE_SECRET_KEY: ${{ secrets.STORAGE_SECRET_KEY }}
+        STORAGE_BUCKET_NAME: ${{ secrets.STORAGE_BUCKET_NAME }}
+      run: |
+        python ingest_bronze.py
