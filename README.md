@@ -8,7 +8,6 @@
 
 ![Oracle Data Architecture](/assets/oracle-architecture.svg)
 
-![Oracle Data Architecture](/assets/oracle-architecture.svg)
 
 ```mermaid
 graph LR
@@ -59,6 +58,92 @@ Rather than relying on real-time noise, this system operates on an **End-of-Day 
 The architecture strictly adheres to the **Medallion Data Lakehouse Design Pattern** (Bronze -> Silver -> Gold).
 
 ---
+
+### 🗄️ Database Schema (Entity-Relationship)
+
+```mermaid
+erDiagram
+    %% BRONZE LAYER
+    bronze_raw_ohlcv {
+        string ticker PK
+        string timeframe PK "15m or 1d"
+        timestamp datetime PK
+        numeric open
+        numeric high
+        numeric low
+        numeric close
+        numeric volume
+    }
+
+    %% SILVER LAYER
+    silver_technical_indicators {
+        string ticker PK, FK
+        string timeframe PK, FK
+        timestamp datetime PK, FK
+        numeric open
+        numeric high
+        numeric low
+        numeric close
+        numeric macd_black
+        numeric macd_red
+        numeric rsi_2
+        numeric rsi_14
+        numeric stochrsi_k
+        numeric stochrsi_d
+        numeric nvi_black
+        numeric nvi_red
+    }
+
+    silver_1d_macro {
+        string ticker PK, FK
+        timestamp datetime PK, FK
+        numeric close
+        numeric nvi_black
+        numeric nvi_red
+        numeric rsi_14
+        numeric macd_black
+        numeric macd_red
+        numeric rsi_2
+        numeric stochrsi_k
+        numeric stochrsi_d
+    }
+
+    %% GOLD LAYER
+    gold_signal_ledger {
+        integer signal_id PK
+        string ticker FK
+        timestamp signal_date
+        string signal_type "HARVEST, EVAC, BLL"
+        numeric entry_price
+        string target_timeframe
+        string verdict "PENDING, WIN, LOSS"
+        timestamp settlement_date
+        numeric settlement_price
+        numeric pnl_percentage
+    }
+
+    gold_screener_latest {
+        string ticker PK, FK
+        numeric latest_close
+        numeric stochrsi_15m
+        string trend_15m
+        string smart_money_daily
+        timestamp last_updated
+    }
+
+    gold_market_breadth {
+        timestamp snapshot_date PK
+        numeric elite_bullish_percentage
+        numeric terminal_bearish_percentage
+        integer elite_bulls
+    }
+
+    %% RELATIONSHIPS
+    bronze_raw_ohlcv ||--|| silver_technical_indicators : "Calculates indicators (1:1)"
+    silver_technical_indicators }|--|| silver_1d_macro : "Aggregates to EOD Macro (Many:1)"
+    silver_1d_macro ||--o{ gold_signal_ledger : "Triggers executions (1:Many)"
+    silver_1d_macro ||--|| gold_screener_latest : "Updates live snapshot (1:1)"
+```
 
 ## 🏗️ The Medallion Architecture
 
