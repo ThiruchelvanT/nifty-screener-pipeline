@@ -8,6 +8,7 @@
 
 ![Oracle Data Architecture](/assets/oracle-architecture.svg)
 
+```mermaid
 graph LR
     %% BRONZE LAYER
     subgraph Bronze [🥉 Bronze Data Lake]
@@ -46,7 +47,6 @@ graph LR
     style Bronze fill:none,stroke:#cd7f32,stroke-width:2px,stroke-dasharray: 5 5
     style Silver fill:none,stroke:#c0c0c0,stroke-width:2px,stroke-dasharray: 5 5
     style Gold fill:none,stroke:#ffd700,stroke-width:2px,stroke-dasharray: 5 5
-
 ## 📌 Overview
 The Market Oracle is an automated, serverless data engineering pipeline designed to ingest, transform, and serve institutional-grade stock market indicators. 
 
