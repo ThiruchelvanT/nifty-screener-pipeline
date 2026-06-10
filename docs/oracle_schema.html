@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>The Market Oracle: Animated ER Diagram</title>
+    <style>
+        :root {
+            --bg: #0d1117; --panel: #161b22; --border: #30363d;
+            --bronze: #cd7f32; --silver: #c0c0c0; --gold: #ffd700;
+            --text-main: #c9d1d9; --text-muted: #8b949e;
+        }
+        
+        body { background-color: var(--bg); color: var(--text-main); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; margin: 0; overflow: auto; padding-bottom: 50px;}
+        .canvas { position: relative; width: 1200px; height: 950px; margin: 20px auto; }
+        
+        /* Table Window Styling */
+        .table-node { position: absolute; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); width: 260px; z-index: 10; font-size: 11px; }
+        .table-header { padding: 8px 12px; font-weight: bold; border-top-left-radius: 7px; border-top-right-radius: 7px; color: #000; font-size: 13px; }
+        .col-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 12px; border-bottom: 1px solid var(--border); position: relative; background: transparent; transition: background 0.2s;}
+        .col-row:hover { background: rgba(255,255,255,0.05); }
+        .col-row:last-child { border-bottom: none; }
+        
+        .attr-name { font-weight: 500; }
+        .attr-meta { display: flex; align-items: center; gap: 4px; }
+        
+        /* Key Badges */
+        .key-badge { font-size: 9px; font-weight: bold; padding: 2px 4px; border-radius: 3px; font-family: monospace;}
+        .pk { background: rgba(255, 75, 75, 0.2); color: #ff7b72; border: 1px solid rgba(255, 75, 75, 0.4); }
+        .fk { background: rgba(88, 166, 255, 0.2); color: #79c0ff; border: 1px solid rgba(88, 166, 255, 0.4); }
+        .type { color: var(--text-muted); font-family: monospace; }
+
+        .bg-bronze { background: var(--bronze); }
+        .bg-silver { background: var(--silver); }
+        .bg-gold { background: var(--gold); }
+
+        /* Positioning the Tables */
+        #bronze_table { top: 300px; left: 20px; }
+        #silver_tech_table { top: 20px; left: 420px; }
+        #silver_macro_table { top: 520px; left: 420px; }
+        #gold_ledger_table { top: 20px; left: 850px; }
+        #gold_screener_table { top: 350px; left: 850px; }
+        #gold_breadth_table { top: 600px; left: 850px; }
+
+        /* SVG Canvas */
+        svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+        .flow-line { fill: none; stroke-width: 2.5; stroke-dasharray: 6 8; animation: flow 1s linear infinite; }
+        
+        .flow-bronze { stroke: var(--bronze); }
+        .flow-silver { stroke: var(--silver); }
+        .flow-gold { stroke: var(--gold); }
+
+        @keyframes flow {
+            from { stroke-dashoffset: 14; }
+            to { stroke-dashoffset: 0; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="canvas">
+    <svg id="svg-canvas">
+        <defs>
+            <marker id="one_bronze" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto">
+                <path d="M 4 2 L 4 10 M 8 2 L 8 10" stroke="#cd7f32" stroke-width="1.5" fill="none"/>
+            </marker>
+            <marker id="one_gold" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto">
+                <path d="M 4 2 L 4 10 M 8 2 L 8 10" stroke="#ffd700" stroke-width="1.5" fill="none"/>
+            </marker>
+
+            <marker id="many_silver" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto">
+                <path d="M 10 6 L 0 0 M 10 6 L 0 12 M 10 6 L 0 6 M 10 2 L 10 10" stroke="#c0c0c0" stroke-width="1.5" fill="none"/>
+            </marker>
+            <marker id="many_gold" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto">
+                <path d="M 10 6 L 0 0 M 10 6 L 0 12 M 10 6 L 0 6 M 10 2 L 10 10" stroke="#ffd700" stroke-width="1.5" fill="none"/>
+            </marker>
+        </defs>
+    </svg>
+
+    <div class="table-node" id="bronze_table">
+        <div class="table-header bg-bronze"><span>bronze_raw_ohlcv</span></div>
+        <div class="col-row" id="brz_tick">
+            <span class="attr-name">ticker</span>
+            <div class="attr-meta"><span class="type">string</span><span class="key-badge pk">[PK]</span></div>
+        </div>
+        <div class="col-row">
+            <span class="attr-name">timeframe</span>
+            <div class="attr-meta"><span class="type">string</span><span class="key-badge pk">[PK]</span></div>
+        </div>
+        <div class="col-row">
+            <span class="attr-name">datetime</span>
+            <div class="attr-meta"><span class="type">timestamp</span><span class="key-badge pk">[PK]</span></div>
+        </div>
+        <div class="col-row"><span>open</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>high</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>low</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>close</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>volume</span> <span class="type">numeric</span></div>
+    </div>
+
+    <div class="table-node" id="silver_tech_table">
+        <div class="table-header bg-silver"><span>silver_technical_indicators</span></div>
+        <div class="col-row" id="st_tick">
+            <span class="attr-name">ticker</span>
+            <div class="attr-meta"><span class="type">string</span><span class="key-badge pk">[PK]</span><span class="key-badge fk">[FK]</span></div>
+        </div>
+        <div class="col-row">
+            <span class="attr-name">timeframe</span>
+            <div class="attr-meta"><span class="type">string</span><span class="key-badge pk">[PK]</span><span class="key-badge fk">[FK]</span></div>
+        </div>
+        <div class="col-row">
+            <span class="attr-name">datetime</span>
+            <div class="attr-meta"><span class="type">timestamp</span><span class="key-badge pk">[PK]</span><span class="key-badge fk">[FK]</span></div>
+        </div>
+        <div class="col-row"><span>open</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>high</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>low</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>close</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>macd_black</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>macd_red</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>rsi_2</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>rsi_14</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>stochrsi_k</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>stochrsi_d</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>nvi_black</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>nvi_red</span> <span class="type">numeric</span></div>
+    </div>
+
+    <div class="table-node" id="silver_macro_table">
+        <div class="table-header bg-silver"><span>silver_1d_macro</span></div>
+        <div class="col-row" id="sm_tick">
+            <span class="attr-name">ticker</span>
+            <div class="attr-meta"><span class="type">string</span><span class="key-badge pk">[PK]</span><span class="key-badge fk">[FK]</span></div>
+        </div>
+        <div class="col-row">
+            <span class="attr-name">datetime</span>
+            <div class="attr-meta"><span class="type">timestamp</span><span class="key-badge pk">[PK]</span><span class="key-badge fk">[FK]</span></div>
+        </div>
+        <div class="col-row"><span>close</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>nvi_black</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>nvi_red</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>rsi_14</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>macd_black</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>macd_red</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>rsi_2</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>stochrsi_k</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>stochrsi_d</span> <span class="type">numeric</span></div>
+    </div>
+
+    <div class="table-node" id="gold_ledger_table">
+        <div class="table-header bg-gold"><span>gold_signal_ledger</span></div>
+        <div class="col-row">
+            <span class="attr-name">signal_id</span>
+            <div class="attr-meta"><span class="type">serial</span><span class="key-badge pk">[PK]</span></div>
+        </div>
+        <div class="col-row" id="gl_tick">
+            <span class="attr-name">ticker</span>
+            <div class="attr-meta"><span class="type">string</span><span class="key-badge fk">[FK]</span></div>
+        </div>
+        <div class="col-row"><span>signal_date</span> <span class="type">timestamp</span></div>
+        <div class="col-row"><span>signal_type</span> <span class="type">string</span></div>
+        <div class="col-row"><span>entry_price</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>target_timeframe</span> <span class="type">string</span></div>
+        <div class="col-row"><span>verdict</span> <span class="type">string</span></div>
+        <div class="col-row"><span>settlement_date</span> <span class="type">timestamp</span></div>
+        <div class="col-row"><span>settlement_price</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>pnl_percentage</span> <span class="type">numeric</span></div>
+    </div>
+
+    <div class="table-node" id="gold_screener_table">
+        <div class="table-header bg-gold"><span>gold_screener_latest</span></div>
+        <div class="col-row" id="gs_tick">
+            <span class="attr-name">ticker</span>
+            <div class="attr-meta"><span class="type">string</span><span class="key-badge pk">[PK]</span><span class="key-badge fk">[FK]</span></div>
+        </div>
+        <div class="col-row"><span>latest_close</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>stochrsi_15m</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>trend_15m</span> <span class="type">string</span></div>
+        <div class="col-row"><span>smart_money_daily</span> <span class="type">string</span></div>
+        <div class="col-row"><span>last_updated</span> <span class="type">timestamp</span></div>
+    </div>
+
+    <div class="table-node" id="gold_breadth_table">
+        <div class="table-header bg-gold"><span>gold_market_breadth</span></div>
+        <div class="col-row">
+            <span class="attr-name">snapshot_date</span>
+            <div class="attr-meta"><span class="type">timestamp</span><span class="key-badge pk">[PK]</span></div>
+        </div>
+        <div class="col-row"><span>elite_bullish_pct</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>terminal_bearish_pct</span> <span class="type">numeric</span></div>
+        <div class="col-row"><span>elite_bulls</span> <span class="type">integer</span></div>
+    </div>
+</div>
+
+<script>
+    function drawConnection(startId, endId, colorClass, markerType) {
+        const startEl = document.getElementById(startId);
+        const endEl = document.getElementById(endId);
+        if(!startEl || !endEl) return;
+
+        const canvasRect = document.querySelector('.canvas').getBoundingClientRect();
+        const startRect = startEl.getBoundingClientRect();
+        const endRect = endEl.getBoundingClientRect();
+
+        // Target the exact vertical center of the specific row
+        const x1 = (startRect.right - canvasRect.left) + 2; 
+        const y1 = (startRect.top - canvasRect.top) + (startRect.height / 2);
+        
+        const x2 = (endRect.left - canvasRect.left) - 2;
+        const y2 = (endRect.top - canvasRect.top) + (endRect.height / 2);
+
+        // Calculate smooth bezier curves
+        const offset = Math.max(80, Math.abs(x2 - x1) * 0.4);
+        
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', `M ${x1} ${y1} C ${x1 + offset} ${y1}, ${x2 - offset} ${y2}, ${x2} ${y2}`);
+        path.setAttribute('class', `flow-line flow-${colorClass}`);
+        
+        if (markerType) {
+            path.setAttribute('marker-end', `url(#${markerType}_${colorClass})`);
+        }
+
+        document.getElementById('svg-canvas').appendChild(path);
+    }
+
+    function renderEngine() {
+        const svg = document.getElementById('svg-canvas');
+        svg.querySelectorAll('path.flow-line').forEach(el => el.remove());
+
+        // STRICT ASSET LINEAGE: Ticker to Ticker Only
+        drawConnection('brz_tick', 'st_tick', 'bronze', 'one');         // Bronze -> Silver Tech (1:1 per record)
+        drawConnection('st_tick', 'sm_tick', 'silver', 'many');         // Silver Tech -> Silver Macro (Many 15m map to 1 Macro)
+        drawConnection('sm_tick', 'gl_tick', 'gold', 'many');           // Silver Macro -> Gold Ledger (1 Macro triggers Many signals)
+        drawConnection('sm_tick', 'gs_tick', 'gold', 'one');            // Silver Macro -> Gold Screener (1 Macro maps to 1 snapshot)
+    }
+
+    // Bind engine to lifecycle events
+    window.onload = renderEngine;
+    window.onresize = renderEngine;
+</script>
+
+</body>
+</html>
