@@ -1,35 +1,53 @@
-name: 🏗️ EOD Macro Healer
+name: 🏛️ EOD Master Pipeline
 
 on:
-  workflow_dispatch: # Allows manual trigger right now
+  workflow_dispatch: 
   schedule:
     - cron: '30 10 * * 1-5' # Runs at 4:00 PM IST (Mon-Fri)
 
 jobs:
-  run-healer:
+  run-daily-engine:
     runs-on: ubuntu-latest 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: 🛎️ Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: ☕ Set up Java 17 (Required for PySpark)
+        uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-      - uses: actions/setup-python@v5
+
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           
-      - name: 📥 Download Postgres Driver
+      - name: 📥 Download Postgres JDBC Driver
         run: |
           mkdir -p jars
           wget https://jdbc.postgresql.org/download/postgresql-42.7.11.jar -O jars/postgresql-42.7.11.jar
           
-      - name: 📦 Install Stack
+      - name: 📦 Install Data Engineering Stack
         run: |
           python -m pip install --upgrade pip
-          # Including pyarrow here because we learned our lesson!
-          pip install pyspark==3.5.1 numpy==1.26.4 pandas==2.1.4 psycopg2-binary pyarrow
+          pip install pyspark==3.5.1 numpy==1.26.4 pandas==2.1.4 pyarrow==14.0.1 psycopg2-binary yfinance sqlalchemy requests psutil
+          pip install git+https://github.com/MerlinR/Pandas-ta-fork.git
+
+      # ==========================================
+      # THE SEQUENTIAL EXECUTION CHAIN
+      # ==========================================
+      - name: 1️⃣ Run EOD Bronze Ingestion
+        env:
+          NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
+        run: python -u bronze_ingestion.py
           
-      - name: 🏗️ Execute Macro Engine
+      - name: 2️⃣ Execute Silver Layer Transformation
+        env:
+          NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
+        run: python -u spark_silver_layer.py
+
+      - name: 3️⃣ Run Macro Healer (Cleanup & Validation)
         env:
           NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
         run: python -u eod_healer.py
