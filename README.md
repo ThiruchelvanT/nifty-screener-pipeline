@@ -64,6 +64,8 @@ The architecture strictly adheres to the **Medallion Data Lakehouse Design Patte
 The Market Oracle utilizes a strict Medallion Architecture (Bronze ➔ Silver ➔ Gold). The data lineage is strictly typed and routed, ensuring absolute clarity from extraction to execution.
 
 > **Visual Lineage:** The diagram below tracks the exact flow of the `ticker` key across the computational layers. *(If the animation is frozen, download `/docs/oracle_schema.html` and open it in your browser).*
+>
+> ![Animated ER Diagram](/assets/animated-schema.gif)
 
 ### 🗄️ Database Schema (Entity-Relationship)
 
