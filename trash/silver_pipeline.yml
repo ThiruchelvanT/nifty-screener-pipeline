@@ -1,0 +1,47 @@
+name: ⚙️ Nifty Silver Layer Transformation
+
+on:
+  workflow_dispatch: # Keeps your manual run button
+  schedule:
+    # Runs exactly ONCE a day at 10:30 UTC (4:00 PM IST), Monday through Friday
+    - cron: '30 10 * * 1-5'
+
+jobs:
+  run-pyspark-job:
+    runs-on: ubuntu-latest 
+
+    steps:
+      - name: 🛎️ Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: ☕ Set up Java 17 (Required for PySpark)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 📥 Download Postgres JDBC Driver
+        run: |
+          mkdir -p jars
+          wget https://jdbc.postgresql.org/download/postgresql-42.7.11.jar -O jars/postgresql-42.7.11.jar
+          
+      - name: 📦 Install Data Engineering Stack
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pyspark==3.5.1" "numpy==1.26.4" "pandas==2.1.4" "numba==0.58.1" "pyarrow==14.0.1" psycopg2-binary yfinance sqlalchemy requests psutil
+          pip install git+https://github.com/MerlinR/Pandas-ta-fork.git
+
+      - name: 📥 Run Bronze Ingestion (Fetch Live Data)
+        env:
+          NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
+        run: python bronze_ingestion.py
+          
+      - name: ⚙️ Execute Silver Layer Transformation
+        env:
+          NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
+        run: python spark_silver_layer.py
