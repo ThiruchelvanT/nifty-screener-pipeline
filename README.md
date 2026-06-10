@@ -8,6 +8,45 @@
 
 ![Oracle Data Architecture](/assets/oracle-architecture.svg)
 
+graph LR
+    %% BRONZE LAYER
+    subgraph Bronze [🥉 Bronze Data Lake]
+        B1[(bronze_raw_ohlcv)]
+    end
+
+    %% SILVER LAYER
+    subgraph Silver [🥈 Silver Processing]
+        S1[(silver_technical_indicators)]
+        S2[(silver_1d_macro)]
+    end
+
+    %% GOLD LAYER
+    subgraph Gold [🥇 Gold Intelligence]
+        G1[(gold_signal_ledger)]
+        G2[(gold_screener_latest)]
+        G3[(gold_market_breadth)]
+    end
+
+    %% DATA LINEAGE (The Arrows)
+    B1 -->|spark_silver_layer.py| S1
+    S1 -->|eod_healer.py| S2
+    S2 -->|intraday_sniper_aws.py| G1
+    S2 -->|Materialized Refresh| G2
+    S2 -.->|HUD Metrics| G3
+
+    %% COLOR STYLING
+    classDef bronze fill:#2a1b0d,stroke:#cd7f32,stroke-width:2px,color:#fff;
+    classDef silver fill:#1e1e1e,stroke:#c0c0c0,stroke-width:2px,color:#fff;
+    classDef gold fill:#332900,stroke:#ffd700,stroke-width:2px,color:#fff;
+
+    class B1 bronze;
+    class S1,S2 silver;
+    class G1,G2,G3 gold;
+
+    style Bronze fill:none,stroke:#cd7f32,stroke-width:2px,stroke-dasharray: 5 5
+    style Silver fill:none,stroke:#c0c0c0,stroke-width:2px,stroke-dasharray: 5 5
+    style Gold fill:none,stroke:#ffd700,stroke-width:2px,stroke-dasharray: 5 5
+
 ## 📌 Overview
 The Market Oracle is an automated, serverless data engineering pipeline designed to ingest, transform, and serve institutional-grade stock market indicators. 
 
