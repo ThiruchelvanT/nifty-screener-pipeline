@@ -248,7 +248,7 @@ for index in global_data:
 st.title("⚖️ The Market Oracle")
 
 # 🏛️ NEW: Added Tab 3 for Active Portfolio
-tab1, tab2, tab3 = st.tabs(["📊 The Screener", "📈 The X-Ray Sandbox", "🟢 Active Portfolio"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 The Screener", "📈 The X-Ray Sandbox", "🟢 Active Portfolio", "🎯 ETF Sniper Radar"])
 
 # ------------------------------------------
 # TAB 1: THE SCREENER (Gold Layer)
