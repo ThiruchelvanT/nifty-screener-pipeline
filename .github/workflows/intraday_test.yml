@@ -1,49 +1,29 @@
-name: 🎯 Intraday Sniper Pulse
+name: ⚡ Intraday Bronze Feeder
 
 on:
-  workflow_dispatch: # Keeps manual button for testing
+  workflow_dispatch: 
   repository_dispatch:
-    types: [trigger-sniper] # The secret password for the cron-job.org Webhook
+    types: [trigger-sniper] # Driven by cron-job.org webhook
 
 jobs:
-  run-sniper:
+  run-intraday-ingestion:
     runs-on: ubuntu-latest 
     steps:
-      - uses: actions/checkout@v4
-      
-      - uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
+      - name: 🛎️ Checkout Repository
+        uses: actions/checkout@v4
           
-      - uses: actions/setup-python@v5
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           
-      - name: 📥 Download Postgres Driver
-        run: |
-          mkdir -p jars
-          wget https://jdbc.postgresql.org/download/postgresql-42.7.11.jar -O jars/postgresql-42.7.11.jar
-          
-      - name: 📦 Install Stack
+      - name: 📦 Install Lightweight Stack
         run: |
           python -m pip install --upgrade pip
-          # Added yfinance, sqlalchemy, and requests to support the Bronze Ingestion engine
-          pip install pyspark==3.5.1 numpy==1.26.4 pandas==2.1.4 psycopg2-binary pyarrow yfinance sqlalchemy requests
+          # ⚡ STRIPPED DOWN: No PySpark, No Java needed for simple ingestion
+          pip install pandas==2.1.4 psycopg2-binary yfinance sqlalchemy requests
           
-      # ==========================================
-      # STEP 1: THE INGESTION (Featherweight Pull)
-      # ==========================================
       - name: 📡 Run Guerrilla Bronze Ingestion (15m)
         env:
           NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
-        # The --intraday flag tells the script to use evasion tactics and only sip recent data
         run: python -u bronze_ingestion.py --intraday
-          
-      # ==========================================
-      # STEP 2: THE EXECUTION (Fire the Sniper)
-      # ==========================================
-      - name: 🎯 Execute Sniper Engine
-        env:
-          NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
-        run: python -u intraday_sniper.py
