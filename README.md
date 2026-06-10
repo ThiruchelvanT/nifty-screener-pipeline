@@ -59,6 +59,12 @@ The architecture strictly adheres to the **Medallion Data Lakehouse Design Patte
 
 ---
 
+## 🗄️ Institutional Data Schema
+
+The Market Oracle utilizes a strict Medallion Architecture (Bronze ➔ Silver ➔ Gold). The data lineage is strictly typed and routed, ensuring absolute clarity from extraction to execution.
+
+> **Visual Lineage:** The diagram below tracks the exact flow of the `ticker` key across the computational layers. *(If the animation is frozen, download `/docs/oracle_schema.html` and open it in your browser).*
+
 ### 🗄️ Database Schema (Entity-Relationship)
 
 ```mermaid
@@ -206,5 +212,6 @@ The entire compute layer is serverless, orchestrated by **GitHub Actions Ubuntu 
 * **Infrastructure Design:** Medallion Architecture, Infrastructure as Code (IaC) diagramming
 
 ---
+
 
 *Disclaimer: This architecture is an engineering showcase of quantitative data pipelines. It is not financial advice.*
