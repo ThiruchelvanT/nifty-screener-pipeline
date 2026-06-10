@@ -476,10 +476,15 @@ with tab4:
         
         # Color Coding the DataFrame
         def color_etf_signals(val):
-            if 'INTRADAY' in str(val):
-                return 'background-color: rgba(255, 75, 75, 0.2); color: #ff4b4b; font-weight: bold;'
-            elif 'LONG_TERM' in str(val):
-                return 'background-color: rgba(9, 171, 59, 0.2); color: #09ab3b; font-weight: bold;'
+            val_str = str(val).upper()
+            if 'SELL_HARVEST' in val_str:
+                return 'background-color: rgba(255, 215, 0, 0.2); color: #ffd700; font-weight: bold;' # 💰 Gold for Take-Profit
+            elif 'SELL_EVAC' in val_str:
+                return 'background-color: rgba(255, 100, 100, 0.2); color: #ff0000; font-weight: bold;' # 🚨 Red for Stop-Loss
+            elif 'INTRADAY' in val_str:
+                return 'background-color: rgba(255, 75, 75, 0.2); color: #ff4b4b; font-weight: bold;' # Pink for Intraday Entry
+            elif 'LONG_TERM' in val_str:
+                return 'background-color: rgba(9, 171, 59, 0.2); color: #09ab3b; font-weight: bold;' # Green for Macro Entry
             return ''
 
         # Display the styled radar grid
