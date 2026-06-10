@@ -167,6 +167,30 @@ def load_silver_history(ticker, timeframe):
         st.error(f"Failed to breach the Silver Vault: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=60) # Fast cache for intraday sweeps
+def load_etf_sniper_radar():
+    """Fetches the latest ETF targets locked by the Dual-Matrix Sniper"""
+    try:
+        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        query = """
+            SELECT 
+                ticker AS "ETF Ticker", 
+                TO_CHAR(signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY - HH12:MI AM') AS "Time Locked",
+                signal_type AS "Signal Type", 
+                entry_price AS "Entry Price", 
+                target_timeframe AS "Timeframe",
+                verdict AS "Status"
+            FROM gold_signal_ledger 
+            WHERE ticker IN ('SILVERBEES.NS', 'GOLDBEES.NS', 'NIFTYBEES.NS', 'BANKBEES.NS', 'ITBEES.NS', 'LIQUIDBEES.NS')
+            ORDER BY signal_date DESC 
+            LIMIT 20;
+        """
+        df = pd.read_sql(query, temp_engine)
+        temp_engine.dispose()
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
 
 # ==========================================
 # 3. TOP LEVEL: BREADTH RADAR
@@ -427,3 +451,48 @@ with tab3:
         )
     else:
         st.info("🛡️ No active long-term positions open. The vault is securely holding cash and waiting for perfect setups.")
+
+# ------------------------------------------
+# TAB 4: ETF SNIPER RADAR (Dual-Matrix Locks)
+# ------------------------------------------
+with tab4:
+    st.subheader("🎯 Institutional ETF Sniper Radar")
+    st.markdown("Live monitoring of Dual-Matrix execution signals exclusively for indexed ETFs.")
+    
+    etf_df = load_etf_sniper_radar()
+    
+    if not etf_df.empty:
+        # HUD Metrics for the ETF Radar
+        col1, col2, col3 = st.columns(3)
+        total_etf_signals = len(etf_df)
+        intraday_etf_count = len(etf_df[etf_df['Signal Type'].str.contains('INTRADAY', na=False)])
+        macro_etf_count = len(etf_df[etf_df['Signal Type'].str.contains('LONG_TERM', na=False)])
+        
+        col1.metric("Total ETF Locks (Recent)", total_etf_signals)
+        col2.metric("Intraday Snipes (15m)", intraday_etf_count)
+        col3.metric("Macro Bull Locks (1d)", macro_etf_count)
+        
+        st.divider()
+        
+        # Color Coding the DataFrame
+        def color_etf_signals(val):
+            if 'INTRADAY' in str(val):
+                return 'background-color: rgba(255, 75, 75, 0.2); color: #ff4b4b; font-weight: bold;'
+            elif 'LONG_TERM' in str(val):
+                return 'background-color: rgba(9, 171, 59, 0.2); color: #09ab3b; font-weight: bold;'
+            return ''
+
+        # Display the styled radar grid
+        st.dataframe(
+            etf_df.style.map(color_etf_signals, subset=['Signal Type']),
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Manual Force Sweep
+        if st.button("🔄 Force Radar Sweep"):
+            st.cache_data.clear()
+            st.rerun()
+            
+    else:
+        st.info("🛡️ ETF Radar Clear. No targets locked recently.")
