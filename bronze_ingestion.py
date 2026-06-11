@@ -8,6 +8,7 @@ import io
 import time
 import random
 from requests import Session
+from sqlalchemy.dialects.postgresql import insert
 
 # ==========================================
 # 0. THE MODE SWITCH (Command Line Argument)
@@ -30,6 +31,22 @@ if not db_password:
 NEON_HOST = "ep-holy-star-amh8eg8r-pooler.c-5.us-east-1.aws.neon.tech"
 db_url = f"postgresql://neondb_owner:{db_password}@{NEON_HOST}:5432/neondb?sslmode=require"
 engine = create_engine(db_url)
+
+# 🛡️ THE GRANDMASTER'S PATCH: Institutional UPSERT Logic
+def postgres_upsert(table, conn, keys, data_iter):
+    """
+    Executes a native PostgreSQL INSERT ON CONFLICT DO NOTHING.
+    This acts as an indestructible shield against Primary Key violations.
+    """
+    data = [dict(zip(keys, row)) for row in data_iter]
+    insert_stmt = insert(table.table).values(data)
+    
+    # If the row already exists in the vault, silently skip it.
+    do_nothing_stmt = insert_stmt.on_conflict_do_nothing(
+        index_elements=['ticker', 'timeframe', 'datetime']
+    )
+    
+    conn.execute(do_nothing_stmt)
 
 # ==========================================
 # 2. DYNAMIC NIFTY 500 INGESTION
@@ -212,7 +229,15 @@ if not master_df.empty:
                 
                 # C. Push the healed 2-year history directly into the database
                 if not healing_df.empty:
-                    healing_df.to_sql("bronze_raw_ohlcv", engine, if_exists="append", index=False)
+                    print("💾 Executing Armored UPSERT for Healed History...")
+                    healing_df.to_sql(
+                        "bronze_raw_ohlcv", 
+                        engine, 
+                        if_exists="append", 
+                        index=False,
+                        method=postgres_upsert,   # ⬅️ Armor Applied
+                        chunksize=2000
+                    )
                     print(f"✅ Vault Healed: Replaced history for {len(corrupted_tickers)} stocks.")
                 
             # 4. Standard Delta Filter (Keep only rows newer than db_max_date)
@@ -231,7 +256,14 @@ if not master_df.empty:
             
         print(f"💾 Pushing {len(master_df)} NEW Delta rows into the Bronze Vault...")
         if not master_df.empty:
-            master_df.to_sql("bronze_raw_ohlcv", engine, if_exists="append", index=False)
+            master_df.to_sql(
+                "bronze_raw_ohlcv", 
+                engine, 
+                if_exists="append", 
+                index=False,
+                method=postgres_upsert,   # ⬅️ Armor Applied
+                chunksize=2000            # Protects memory during massive inserts
+            )
         print("✅ Bronze Ingestion Complete!")
     else:
         print("✅ Vault is perfectly up to date. No new rows needed.")
