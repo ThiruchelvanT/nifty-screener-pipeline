@@ -57,7 +57,8 @@ def load_active_portfolio():
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
-        # We use a CTE to explicitly grab ONLY the absolute latest price from the macro table
+        
+        # 🛡️ THE AGGREGATOR QUERY: Groups multiple buys into a single average position
         query = """
             WITH latest_macro AS (
                 SELECT ticker, close 
@@ -65,18 +66,27 @@ def load_active_portfolio():
                     SELECT ticker, close, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn 
                     FROM silver_1d_macro
                 ) sub WHERE rn = 1
+            ),
+            aggregated_ledger AS (
+                SELECT 
+                    ticker,
+                    MIN(signal_date) as first_entry_date,
+                    COUNT(signal_id) as total_signals,
+                    AVG(entry_price) as avg_entry_price
+                FROM gold_signal_ledger
+                WHERE verdict = 'PENDING' AND target_timeframe = '1d'
+                GROUP BY ticker
             )
             SELECT 
                 g.ticker AS "Ticker",
-                g.signal_type AS "Strategy",
-                TO_CHAR(g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY') AS "Entry Date",
-                ROUND(g.entry_price::numeric, 2) AS "Entry Price",
+                g.total_signals AS "Signal Count",
+                TO_CHAR(g.first_entry_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY') AS "First Entry",
+                ROUND(g.avg_entry_price::numeric, 2) AS "Avg Entry Price",
                 ROUND(s.close::numeric, 2) AS "Current Price",
-                ROUND( (((s.close - g.entry_price) / g.entry_price) * 100)::numeric, 2 ) AS "Unrealized PNL (%)"
-            FROM gold_signal_ledger g
+                ROUND( (((s.close - g.avg_entry_price) / g.avg_entry_price) * 100)::numeric, 2 ) AS "Unrealized PNL (%)"
+            FROM aggregated_ledger g
             JOIN latest_macro s ON g.ticker = s.ticker
-            WHERE g.verdict = 'PENDING' AND g.target_timeframe = '1d'
-            ORDER BY ((s.close - g.entry_price) / g.entry_price) DESC;
+            ORDER BY ((s.close - g.avg_entry_price) / g.avg_entry_price) DESC;
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
@@ -247,7 +257,6 @@ for index in global_data:
 # ==========================================
 st.title("⚖️ The Market Oracle")
 
-# 🏛️ NEW: Added Tab 3 for Active Portfolio
 tab1, tab2, tab3, tab4 = st.tabs(["📊 The Screener", "📈 The X-Ray Sandbox", "🟢 Active Portfolio", "🎯 ETF Sniper Radar"])
 
 # ------------------------------------------
