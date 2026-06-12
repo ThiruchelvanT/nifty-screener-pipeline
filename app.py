@@ -70,6 +70,7 @@ def load_active_portfolio():
             aggregated_ledger AS (
                 SELECT 
                     ticker,
+                    target_timeframe,
                     MIN(signal_date) as first_entry_date,
                     COUNT(signal_id) as total_signals,
                     AVG(entry_price) as avg_entry_price
