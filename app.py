@@ -80,7 +80,7 @@ def load_active_portfolio():
             SELECT 
                 g.ticker AS "Ticker",
                 g.total_signals AS "Signal Count",
-                TO_CHAR(g.first_entry_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY') AS "First Entry",
+                TO_CHAR(g.first_entry_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY - HH12:MI AM') AS "Entry Time",
                 ROUND(g.avg_entry_price::numeric, 2) AS "Avg Entry Price",
                 ROUND(s.close::numeric, 2) AS "Current Price",
                 ROUND( (((s.close - g.avg_entry_price) / g.avg_entry_price) * 100)::numeric, 2 ) AS "Unrealized PNL (%)"
