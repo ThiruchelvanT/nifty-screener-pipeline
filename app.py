@@ -76,7 +76,7 @@ def load_active_portfolio():
                     AVG(entry_price) as avg_entry_price
                 FROM gold_signal_ledger
                 WHERE verdict = 'PENDING' AND target_timeframe = '1d'
-                GROUP BY ticker
+                GROUP BY ticker,target_timeframe
             )
             SELECT 
                 g.ticker AS "Ticker",
