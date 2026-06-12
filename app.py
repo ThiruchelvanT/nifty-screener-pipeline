@@ -126,7 +126,6 @@ def load_daily_executions(timeframe):
 def load_daily_pnl(timeframe):
     try:
         temp_engine = create_engine(st.secrets["DATABASE_URL"])
-        # Calculates Unrealized PNL ratio specifically for today's active entries
         query = f"""
             WITH latest_prices AS (
                 SELECT ticker, close 
@@ -155,7 +154,6 @@ def load_daily_pnl(timeframe):
 def load_weekly_performance(timeframe):
     try:
         temp_engine = create_engine(st.secrets["DATABASE_URL"])
-        # Extracts closed PNL percentage directly from the ledger over the last 7 days
         query = f"""
             SELECT 
                 (signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date as "Date",
@@ -275,6 +273,61 @@ def load_etf_sniper_radar():
         temp_engine.dispose()
         return df
     except Exception as e:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=60)
+def load_live_intraday_signals():
+    try:
+        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        query = """
+            WITH latest_1d AS (
+                SELECT ticker, nvi_black, nvi_red, rsi_14, macd_black, macd_red, rsi_2 
+                FROM (
+                    SELECT *, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn 
+                    FROM silver_1d_macro
+                ) sub WHERE rn = 1
+            ),
+            latest_15m AS (
+                SELECT ticker, close, rsi_2, rsi_14, stochrsi_k, stochrsi_d, macd_black, macd_red 
+                FROM (
+                    SELECT *, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn 
+                    FROM silver_technical_indicators
+                ) sub WHERE rn = 1
+            ),
+            scored_stocks AS (
+                SELECT 
+                    m.ticker, 
+                    m.close,
+                    (CASE WHEN d.nvi_black > d.nvi_red THEN 20 ELSE 0 END +
+                     CASE WHEN m.macd_black > m.macd_red THEN 25 ELSE 0 END +
+                     CASE WHEN m.rsi_14 > 45 THEN 25 ELSE 0 END +
+                     CASE WHEN m.rsi_2 < 5 AND m.stochrsi_k < 10 AND m.stochrsi_d < 10 THEN 30 ELSE 0 END) AS buy_intraday_score
+                FROM latest_15m m
+                JOIN latest_1d d ON m.ticker = d.ticker
+            )
+            SELECT 
+                s.ticker AS "Stock",
+                ROUND(s.close::numeric, 2) AS "Current Price",
+                s.buy_intraday_score AS "Intraday Score",
+                CASE 
+                    WHEN l.ticker IS NOT NULL THEN '🟢 BOUGHT (Active)'
+                    WHEN s.buy_intraday_score >= 85 THEN '⚡ BUY TRIGGERED (Locking)'
+                    WHEN s.buy_intraday_score >= 70 THEN '🔥 HEATING UP'
+                    ELSE '⏳ WAITING'
+                END AS "Signal Status"
+            FROM scored_stocks s
+            LEFT JOIN gold_signal_ledger l 
+                ON s.ticker = l.ticker 
+                AND l.verdict = 'PENDING' 
+                AND l.target_timeframe = '15m'
+            WHERE s.buy_intraday_score >= 50
+            ORDER BY s.buy_intraday_score DESC
+            LIMIT 15;
+        """
+        df = pd.read_sql(query, temp_engine)
+        temp_engine.dispose()
+        return df
+    except Exception:
         return pd.DataFrame()
 
 
@@ -512,42 +565,71 @@ with tab2:
 # ------------------------------------------
 with tab3:
     st.subheader("⚡ Intraday Sniper Operations")
-    
-    # 1. Active Open Positions for Intraday
+
+    # 1. TOP LEVEL: Today's High-Level KPIs
+    df_intra_today = load_daily_executions('15m')
+    intra_pnl_today = load_daily_pnl('15m')
     df_intra_portfolio = load_active_portfolio('15m')
+
+    intra_avg_pnl = df_intra_portfolio["Unrealized PNL (%)"].mean() if not df_intra_portfolio.empty else 0.00
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Today's Executions", len(df_intra_today))
+    col2.metric("Today's Settled PNL", f"{intra_pnl_today:.2f}%", delta=f"{intra_pnl_today:.2f}%" if intra_pnl_today >= 0 else f"{intra_pnl_today:.2f}%")
+    col3.metric("Open Intraday Positions", len(df_intra_portfolio))
+    col4.metric("Avg Unrealized PNL", f"{intra_avg_pnl:.2f}%", delta="Profitable" if intra_avg_pnl > 0 else "Drawdown", delta_color="normal" if intra_avg_pnl > 0 else "inverse")
+
+    st.divider()
+
+    # 2. THE RADAR: Live Signals Flowing Right Now
+    st.markdown("### 📡 Live Signal Radar (The Matrix)")
+    st.caption("Displays the real-time computational scores. Tracks targets as they heat up before AWS execution.")
+    df_live_signals = load_live_intraday_signals()
+
+    if not df_live_signals.empty:
+        def color_signal_status(val):
+            val_str = str(val).upper()
+            if 'BOUGHT' in val_str:
+                return 'background-color: rgba(9, 171, 59, 0.2); color: #09ab3b; font-weight: bold;'
+            elif 'TRIGGERED' in val_str:
+                return 'background-color: rgba(255, 75, 75, 0.2); color: #ff4b4b; font-weight: bold;'
+            elif 'HEATING' in val_str:
+                return 'color: #FFA500; font-weight: bold;'
+            return 'color: gray;'
+
+        st.dataframe(
+            df_live_signals.style.map(color_signal_status, subset=['Signal Status']),
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("Radar is quiet. No stocks are currently showing intraday momentum.")
+
+    st.divider()
+
+    # 3. ACTIVE OPEN POSITIONS (The Vault)
+    st.markdown("### 🟢 Active Open Intraday")
     if not df_intra_portfolio.empty:
-        intra_avg_pnl = df_intra_portfolio["Unrealized PNL (%)"].mean()
-        col1, col2 = st.columns(2)
-        col1.metric("Open Intraday Positions", len(df_intra_portfolio))
-        col2.metric("Average Unrealized PNL", f"{intra_avg_pnl:.2f}%", delta="Profitable" if intra_avg_pnl > 0 else "Drawdown", delta_color="normal" if intra_avg_pnl > 0 else "inverse")
-        
         def color_pnl(val):
             color = '#26A69A' if val > 0 else '#EF5350' if val < 0 else 'gray'
             return f'color: {color}; font-weight: bold;'
-        
+
         st.dataframe(df_intra_portfolio.style.map(color_pnl, subset=["Unrealized PNL (%)"]), use_container_width=True, hide_index=True)
     else:
         st.info("No active open intraday positions.")
-        
+
     st.divider()
-    
-    # 2. Today's Execution Ledger
-    df_intra_today = load_daily_executions('15m')
-    intra_pnl_today = load_daily_pnl('15m')
-    
-    col3, col4 = st.columns(2)
-    col3.metric("Today's Executions (15m)", len(df_intra_today))
-    col4.metric("Today's Current PNL Ratio", f"{intra_pnl_today:.2f}%", delta=f"{intra_pnl_today:.2f}%" if intra_pnl_today >= 0 else f"{intra_pnl_today:.2f}%")
-    
+
+    # 4. TODAY's ORDER BOOK (The Ledger)
     st.markdown("### 📋 Today's Order Book")
     if not df_intra_today.empty:
         st.dataframe(df_intra_today, use_container_width=True, hide_index=True)
     else:
         st.info("No intraday actions executed yet during today's session.")
-        
+
     st.divider()
-    
-    # 3. Weekly Curve
+
+    # 5. HISTORICAL CURVE
     st.markdown("### 📈 Weekly Performance Curve (Last 7 Days)")
     df_intra_weekly = load_weekly_performance('15m')
     if not df_intra_weekly.empty:
