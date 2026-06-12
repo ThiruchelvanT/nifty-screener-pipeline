@@ -79,6 +79,11 @@ def load_active_portfolio():
             )
             SELECT 
                 g.ticker AS "Ticker",
+                CASE 
+                    WHEN g.target_timeframe = '1d' THEN 'Long Term (1D)'
+                    WHEN g.target_timeframe = '15m' THEN 'Intraday (15m)'
+                    ELSE g.target_timeframe 
+                END AS "Category",
                 g.total_signals AS "Signal Count",
                 TO_CHAR(g.first_entry_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY - HH12:MI AM') AS "Entry Time",
                 ROUND(g.avg_entry_price::numeric, 2) AS "Avg Entry Price",
