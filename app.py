@@ -3,6 +3,7 @@ import pandas as pd
 import yfinance as yf
 import psycopg2
 import plotly.graph_objects as go
+import plotly.express as px
 from plotly.subplots import make_subplots
 from sqlalchemy import create_engine
 import os
@@ -51,15 +52,14 @@ def load_ledger_scoreboard():
         return pd.DataFrame()
 
 @st.cache_data(ttl=60) # ⚡ Fast Cache for Live Portfolio
-def load_active_portfolio():
+def load_active_portfolio(timeframe):
     try:
         conn = psycopg2.connect(
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
         
-        # 🛡️ THE AGGREGATOR QUERY: Groups multiple buys into a single average position
-        query = """
+        query = f"""
             WITH latest_macro AS (
                 SELECT ticker, close 
                 FROM (
@@ -75,13 +75,13 @@ def load_active_portfolio():
                     COUNT(signal_id) as total_signals,
                     AVG(entry_price) as avg_entry_price
                 FROM gold_signal_ledger
-                WHERE verdict = 'PENDING' AND target_timeframe = '1d'
-                GROUP BY ticker,target_timeframe
+                WHERE verdict = 'PENDING' AND target_timeframe = '{timeframe}'
+                GROUP BY ticker, target_timeframe
             )
             SELECT 
                 g.ticker AS "Ticker",
                 CASE 
-                    WHEN g.target_timeframe = '1d' THEN 'Long Term (1D)'
+                    WHEN g.target_timeframe = '1d' THEN 'Macro (1D)'
                     WHEN g.target_timeframe = '15m' THEN 'Intraday (15m)'
                     ELSE g.target_timeframe 
                 END AS "Category",
@@ -98,7 +98,78 @@ def load_active_portfolio():
         conn.close()
         return df
     except Exception as e:
-        st.error(f"Failed to load active portfolio: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=60)
+def load_daily_executions(timeframe):
+    try:
+        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        query = f"""
+            SELECT 
+                ticker AS "Ticker",
+                signal_type AS "Action",
+                entry_price AS "Execution Price",
+                TO_CHAR(signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'HH12:MI AM') AS "Execution Time",
+                verdict AS "Status"
+            FROM gold_signal_ledger
+            WHERE target_timeframe = '{timeframe}'
+              AND (signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date
+            ORDER BY signal_date DESC;
+        """
+        df = pd.read_sql(query, temp_engine)
+        temp_engine.dispose()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=60)
+def load_daily_pnl(timeframe):
+    try:
+        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        # Calculates Unrealized PNL ratio specifically for today's active entries
+        query = f"""
+            WITH latest_prices AS (
+                SELECT ticker, close 
+                FROM (
+                    SELECT ticker, close, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn 
+                    FROM silver_1d_macro
+                ) sub WHERE rn = 1
+            )
+            SELECT 
+                COALESCE(ROUND(AVG(((s.close - g.entry_price) / g.entry_price) * 100)::numeric, 2), 0.00) as pnl_ratio
+            FROM gold_signal_ledger g
+            JOIN latest_prices s ON g.ticker = s.ticker
+            WHERE g.target_timeframe = '{timeframe}' 
+              AND (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date
+              AND g.verdict = 'PENDING';
+        """
+        df = pd.read_sql(query, temp_engine)
+        temp_engine.dispose()
+        if not df.empty and pd.notna(df.iloc[0]['pnl_ratio']):
+            return float(df.iloc[0]['pnl_ratio'])
+        return 0.0
+    except Exception:
+        return 0.0
+
+@st.cache_data(ttl=300)
+def load_weekly_performance(timeframe):
+    try:
+        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        # Extracts closed PNL percentage directly from the ledger over the last 7 days
+        query = f"""
+            SELECT 
+                (signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date as "Date",
+                SUM(COALESCE(pnl_percentage, 0)) as "Daily PNL (%)"
+            FROM gold_signal_ledger
+            WHERE target_timeframe = '{timeframe}'
+              AND signal_date >= NOW() - INTERVAL '7 days'
+            GROUP BY "Date"
+            ORDER BY "Date" ASC;
+        """
+        df = pd.read_sql(query, temp_engine)
+        temp_engine.dispose()
+        return df
+    except Exception:
         return pd.DataFrame()
 
 @st.cache_data(ttl=300) 
@@ -183,9 +254,8 @@ def load_silver_history(ticker, timeframe):
         st.error(f"Failed to breach the Silver Vault: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=60) # Fast cache for intraday sweeps
+@st.cache_data(ttl=60) 
 def load_etf_sniper_radar():
-    """Fetches the latest ETF targets locked by the Dual-Matrix Sniper"""
     try:
         temp_engine = create_engine(st.secrets["DATABASE_URL"])
         query = """
@@ -263,7 +333,14 @@ for index in global_data:
 # ==========================================
 st.title("⚖️ The Market Oracle")
 
-tab1, tab2, tab3, tab4 = st.tabs(["📊 The Screener", "📈 The X-Ray Sandbox", "🟢 Active Portfolio", "🎯 ETF Sniper Radar"])
+# Expanding to 5 dedicated tabs to isolate Intraday vs Macro functionality
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📊 The Screener", 
+    "📈 The X-Ray Sandbox", 
+    "⚡ Intraday Ledger", 
+    "🏛️ Macro Ledger", 
+    "🎯 ETF Sniper Radar"
+])
 
 # ------------------------------------------
 # TAB 1: THE SCREENER (Gold Layer)
@@ -331,8 +408,9 @@ with tab1:
     st.divider()
     st.caption(f"Last Vault Update: {filename}")
 
+
 # ------------------------------------------
-# TAB 2: THE X-RAY SANDBOX (With Dual Line Stoch RSI)
+# TAB 2: THE X-RAY SANDBOX
 # ------------------------------------------
 with tab2:
     st.subheader("🔬 Institutional Indicator X-Ray")
@@ -380,7 +458,7 @@ with tab2:
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2_under'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
             fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2'], name='RSI(2)', line=dict(color='#FFA500', width=1.5)), row=3, col=1)
 
-            # ROW 4: TRADINGVIEW PARITY STOCHASTIC RSI (%K vs %D)
+            # ROW 4: TRADINGVIEW PARITY STOCHASTIC RSI
             fig.add_hrect(y0=20, y1=80, fillcolor="rgba(255, 100, 100, 0.05)", layer="below", line_width=0, row=4, col=1)
             fig.add_hline(y=80, line_width=1, line_color="gray", line_dash="dash", row=4, col=1)
             fig.add_hline(y=20, line_width=1, line_color="gray", line_dash="dash", row=4, col=1)
@@ -428,56 +506,119 @@ with tab2:
         else:
             st.warning("Historical data is still warming up for this asset.")
 
+
 # ------------------------------------------
-# TAB 3: THE ACTIVE PORTFOLIO (Live Ledger)
+# TAB 3: INTRADAY LEDGER (15m)
 # ------------------------------------------
 with tab3:
-    st.subheader("🟢 Active Long-Term Campaigns")
+    st.subheader("⚡ Intraday Sniper Operations")
     
-    # Render the Live Portfolio DataFrame
-    df_portfolio = load_active_portfolio()
-    
-    if not df_portfolio.empty:
-        # Calculate Total Portfolio Health
-        avg_pnl = df_portfolio["Unrealized PNL (%)"].mean()
-        
-        # Display Top-Level Metrics
+    # 1. Active Open Positions for Intraday
+    df_intra_portfolio = load_active_portfolio('15m')
+    if not df_intra_portfolio.empty:
+        intra_avg_pnl = df_intra_portfolio["Unrealized PNL (%)"].mean()
         col1, col2 = st.columns(2)
-        col1.metric("Open Positions", len(df_portfolio))
-        col2.metric("Average Unrealized PNL", f"{avg_pnl:.2f}%", 
-                    delta="Profitable" if avg_pnl > 0 else "Drawdown", 
-                    delta_color="normal" if avg_pnl > 0 else "inverse")
+        col1.metric("Open Intraday Positions", len(df_intra_portfolio))
+        col2.metric("Average Unrealized PNL", f"{intra_avg_pnl:.2f}%", delta="Profitable" if intra_avg_pnl > 0 else "Drawdown", delta_color="normal" if intra_avg_pnl > 0 else "inverse")
         
-        st.divider()
-        
-        # Function to color the PNL column conditionally
         def color_pnl(val):
             color = '#26A69A' if val > 0 else '#EF5350' if val < 0 else 'gray'
             return f'color: {color}; font-weight: bold;'
         
-        # Apply Pandas Styler map for dynamic UI rendering
-        styled_df = df_portfolio.style.map(color_pnl, subset=["Unrealized PNL (%)"])
-        
-        # Display in Streamlit
-        st.dataframe(
-            styled_df,
-            use_container_width=True,
-            hide_index=True
-        )
+        st.dataframe(df_intra_portfolio.style.map(color_pnl, subset=["Unrealized PNL (%)"]), use_container_width=True, hide_index=True)
     else:
-        st.info("🛡️ No active long-term positions open. The vault is securely holding cash and waiting for perfect setups.")
+        st.info("No active open intraday positions.")
+        
+    st.divider()
+    
+    # 2. Today's Execution Ledger
+    df_intra_today = load_daily_executions('15m')
+    intra_pnl_today = load_daily_pnl('15m')
+    
+    col3, col4 = st.columns(2)
+    col3.metric("Today's Executions (15m)", len(df_intra_today))
+    col4.metric("Today's Current PNL Ratio", f"{intra_pnl_today:.2f}%", delta=f"{intra_pnl_today:.2f}%" if intra_pnl_today >= 0 else f"{intra_pnl_today:.2f}%")
+    
+    st.markdown("### 📋 Today's Order Book")
+    if not df_intra_today.empty:
+        st.dataframe(df_intra_today, use_container_width=True, hide_index=True)
+    else:
+        st.info("No intraday actions executed yet during today's session.")
+        
+    st.divider()
+    
+    # 3. Weekly Curve
+    st.markdown("### 📈 Weekly Performance Curve (Last 7 Days)")
+    df_intra_weekly = load_weekly_performance('15m')
+    if not df_intra_weekly.empty:
+        df_intra_weekly["Cumulative Growth (%)"] = df_intra_weekly["Daily PNL (%)"].cumsum()
+        fig_intra = px.line(df_intra_weekly, x="Date", y="Cumulative Growth (%)", title="Intraday Cumulative Variance", markers=True)
+        st.plotly_chart(fig_intra, use_container_width=True)
+    else:
+        st.warning("Insufficient baseline data available to plot the 7-day intraday equity curve.")
+
 
 # ------------------------------------------
-# TAB 4: ETF SNIPER RADAR (Dual-Matrix Locks)
+# TAB 4: MACRO LEDGER (1D)
 # ------------------------------------------
 with tab4:
+    st.subheader("🏛️ Structural Allocation & Positions")
+    
+    # 1. Active Open Positions for Macro
+    df_macro_portfolio = load_active_portfolio('1d')
+    if not df_macro_portfolio.empty:
+        macro_avg_pnl = df_macro_portfolio["Unrealized PNL (%)"].mean()
+        col1, col2 = st.columns(2)
+        col1.metric("Open Macro Positions", len(df_macro_portfolio))
+        col2.metric("Average Unrealized PNL", f"{macro_avg_pnl:.2f}%", delta="Profitable" if macro_avg_pnl > 0 else "Drawdown", delta_color="normal" if macro_avg_pnl > 0 else "inverse")
+        
+        def color_pnl(val):
+            color = '#26A69A' if val > 0 else '#EF5350' if val < 0 else 'gray'
+            return f'color: {color}; font-weight: bold;'
+            
+        st.dataframe(df_macro_portfolio.style.map(color_pnl, subset=["Unrealized PNL (%)"]), use_container_width=True, hide_index=True)
+    else:
+        st.info("No active open macro positions.")
+        
+    st.divider()
+    
+    # 2. Today's Execution Ledger
+    df_macro_today = load_daily_executions('1d')
+    macro_pnl_today = load_daily_pnl('1d')
+    
+    col3, col4 = st.columns(2)
+    col3.metric("Today's Executions (1D)", len(df_macro_today))
+    col4.metric("Today's Current PNL Ratio", f"{macro_pnl_today:.2f}%", delta=f"{macro_pnl_today:.2f}%" if macro_pnl_today >= 0 else f"{macro_pnl_today:.2f}%")
+    
+    st.markdown("### 📋 Today's Order Book")
+    if not df_macro_today.empty:
+        st.dataframe(df_macro_today, use_container_width=True, hide_index=True)
+    else:
+        st.info("No systemic macro shifts detected or adjustments made today.")
+        
+    st.divider()
+    
+    # 3. Weekly Curve
+    st.markdown("### 🏛️ Structural Capital Curve (Last 7 Days)")
+    df_macro_weekly = load_weekly_performance('1d')
+    if not df_macro_weekly.empty:
+        df_macro_weekly["Structural Growth (%)"] = df_macro_weekly["Daily PNL (%)"].cumsum()
+        fig_macro = px.area(df_macro_weekly, x="Date", y="Structural Growth (%)", title="Macro Framework Long-Term Equity Curve")
+        st.plotly_chart(fig_macro, use_container_width=True)
+    else:
+        st.warning("Insufficient baseline data available to plot the 7-day macro position curve.")
+
+
+# ------------------------------------------
+# TAB 5: ETF SNIPER RADAR
+# ------------------------------------------
+with tab5:
     st.subheader("🎯 Institutional ETF Sniper Radar")
     st.markdown("Live monitoring of Dual-Matrix execution signals exclusively for indexed ETFs.")
     
     etf_df = load_etf_sniper_radar()
     
     if not etf_df.empty:
-        # HUD Metrics for the ETF Radar
         col1, col2, col3 = st.columns(3)
         total_etf_signals = len(etf_df)
         intraday_etf_count = len(etf_df[etf_df['Signal Type'].str.contains('INTRADAY', na=False)])
@@ -489,27 +630,24 @@ with tab4:
         
         st.divider()
         
-        # Color Coding the DataFrame
         def color_etf_signals(val):
             val_str = str(val).upper()
             if 'SELL_HARVEST' in val_str:
-                return 'background-color: rgba(255, 215, 0, 0.2); color: #ffd700; font-weight: bold;' # 💰 Gold for Take-Profit
+                return 'background-color: rgba(255, 215, 0, 0.2); color: #ffd700; font-weight: bold;'
             elif 'SELL_EVAC' in val_str:
-                return 'background-color: rgba(255, 100, 100, 0.2); color: #ff0000; font-weight: bold;' # 🚨 Red for Stop-Loss
+                return 'background-color: rgba(255, 100, 100, 0.2); color: #ff0000; font-weight: bold;'
             elif 'INTRADAY' in val_str:
-                return 'background-color: rgba(255, 75, 75, 0.2); color: #ff4b4b; font-weight: bold;' # Pink for Intraday Entry
+                return 'background-color: rgba(255, 75, 75, 0.2); color: #ff4b4b; font-weight: bold;'
             elif 'LONG_TERM' in val_str:
-                return 'background-color: rgba(9, 171, 59, 0.2); color: #09ab3b; font-weight: bold;' # Green for Macro Entry
+                return 'background-color: rgba(9, 171, 59, 0.2); color: #09ab3b; font-weight: bold;'
             return ''
 
-        # Display the styled radar grid
         st.dataframe(
             etf_df.style.map(color_etf_signals, subset=['Signal Type']),
             use_container_width=True,
             hide_index=True
         )
         
-        # Manual Force Sweep
         if st.button("🔄 Force Radar Sweep"):
             st.cache_data.clear()
             st.rerun()
