@@ -1,26 +1,42 @@
-graph TD
-    %% Styling Definitions
-    classDef aws style fill:#ff9900,stroke:#333,stroke-width:2px,color:#fff;
-    classDef github style fill:#24292e,stroke:#333,stroke-width:2px,color:#fff;
-    classDef neon style fill:#00e699,stroke:#333,stroke-width:2px,color:#000;
+# 🏛️ Omni-Matrix Intraday Trading Architecture
 
-    subgraph AWS_Cloud [AWS Cloud Environment]
-        EB[⏰ AWS EventBridge<br/>Master Clock Rules]:::aws
+This living documentation outlines the automated, event-driven data pipeline orchestrating market ingestion and trade signal calculation.
+
+## 📡 System Topology Flow
+
+```mermaid
+graph TD
+    %% Define System Styles
+    classDef aws style fill:#FF9900,stroke:#333,stroke-width:2px,color:#fff;
+    classDef github style fill:#24292e,stroke:#333,stroke-width:2px,color:#fff;
+    classDef database style fill:#00E676,stroke:#333,stroke-width:2px,color:#000;
+
+    subgraph AWS_Cloud [☁️ Amazon Web Services]
+        EB1[⏰ Clock: Opening Strike<br/>03:46 UTC / 09:16 AM IST]:::aws
+        EB2[⏱️ Clock: Sustained Pulse<br/>Every 15m / 04:00-09:59 UTC]:::aws
         Lambda[🦅 AWS Lambda Engine<br/>IntradaySniperEngine]:::aws
     end
 
-    subgraph GitHub_Platform [GitHub Ecosystem]
-        GA[⚡ GitHub Actions Runner<br/>Intraday Bronze Feeder]:::github
+    subgraph GitHub_Platform [🐙 GitHub Enterprise]
+        Runner[⚡ Actions Runner<br/>intraday_feeder.yml]:::github
     end
 
-    subgraph Neon_Platform [Neon Serverless Postgres]
-        DB_Bronze[(🥉 Bronze Vault<br/>raw_ohlcv table)]:::neon
-        DB_Gold[(🥇 Gold Ledger<br/>signal_ledger table)]:::neon
+    subgraph Storage_Fabric [🐘 Neon PostgreSQL]
+        Bronze[(🥉 Bronze Layer<br/>bronze_raw_ohlcv)]:::database
+        Gold[(🥇 Gold Ledger<br/>gold_signal_ledger)]:::database
     end
 
-    %% Architectural Flow Links
-    EB -->|1. Authenticated API POST<br/>trigger-sniper event| GA
-    GA -->|2. Executes Ingestion Script<br/>yfinance to Database| DB_Bronze
-    GA -->|3. AWS CLI Remote Invoke<br/>--invocation-type Event| Lambda
-    Lambda -.->|4. Liveness Check<br/>Verifies Data Freshness| DB_Bronze
-    Lambda -->|5. Vectorized Indicator Math<br/>Logs Target Signals| DB_Gold
+    %% Execution Sequences
+    EB1 -->|1. HTTP POST: repository_dispatch| Runner
+    EB2 -->|1. HTTP POST: repository_dispatch| Runner
+    
+    Runner -->|2. Execute Ingestion<br/>yfinance API Pull| Bronze
+    Runner -->|3. Trigger Payload<br/>aws lambda invoke --type Event| Lambda
+    
+    Lambda -.->|4. Verify Freshness<br/>Timestamp Liveness Check| Bronze
+    Lambda -->|5. Vector Math Calculations<br/>Log Target Positions| Gold
+
+    %% Visual Layout Optimization
+    style AWS_Cloud fill:#fff3e0,stroke:#ffb74d,stroke-width:1px;
+    style GitHub_Platform fill:#eceff1,stroke:#b0bec5,stroke-width:1px;
+    style Storage_Fabric fill:#e8f5e9,stroke:#a5d6a7,stroke-width:1px;
