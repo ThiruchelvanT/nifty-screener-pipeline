@@ -23,6 +23,7 @@ graph TD
 
     subgraph Storage_Fabric [🐘 Neon PostgreSQL]
         Bronze[(🥉 Bronze Layer<br/>bronze_raw_ohlcv)]:::database
+        Silver[(🥈 Silver Layer<br/>silver_daily_features)]:::database
         Gold[(🥇 Gold Ledger<br/>gold_signal_ledger)]:::database
     end
 
@@ -33,11 +34,11 @@ graph TD
     Runner -->|2. Execute Ingestion<br/>yfinance API Pull| Bronze
     Runner -->|3. Trigger Payload<br/>aws lambda invoke --type Event| Lambda
     
-    Lambda -.->|4. Verify Freshness<br/>Timestamp Liveness Check| Bronze
+    Lambda -.->|4a. Verify Freshness<br/>Timestamp Liveness Check| Bronze
+    Lambda -.->|4b. Read Macro Context<br/>Cross-reference 1D Trend| Silver
     Lambda -->|5. Vector Math Calculations<br/>Log Target Positions| Gold
 
     %% Transparent Subgraph Styling for Dark Mode Compatibility
     style AWS_Cloud fill:transparent,stroke:#e68a00,stroke-width:2px,stroke-dasharray: 5 5;
     style GitHub_Platform fill:transparent,stroke:#768390,stroke-width:2px,stroke-dasharray: 5 5;
     style Storage_Fabric fill:transparent,stroke:#00a859,stroke-width:2px,stroke-dasharray: 5 5;
-
