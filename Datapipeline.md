@@ -6,10 +6,10 @@ This living documentation outlines the automated, event-driven data pipeline orc
 
 ```mermaid
 graph TD
-    %% Define System Styles
-    classDef aws style fill:#FF9900,stroke:#333,stroke-width:2px,color:#fff;
-    classDef github style fill:#24292e,stroke:#333,stroke-width:2px,color:#fff;
-    classDef database style fill:#00E676,stroke:#333,stroke-width:2px,color:#000;
+    %% Theme-Agnostic Styling (Works in Light & Dark Mode)
+    classDef aws fill:#e68a00,stroke:#cc7a00,stroke-width:2px,color:#ffffff;
+    classDef github fill:#424a53,stroke:#24292e,stroke-width:2px,color:#ffffff;
+    classDef database fill:#00a859,stroke:#007a41,stroke-width:2px,color:#ffffff;
 
     subgraph AWS_Cloud [☁️ Amazon Web Services]
         EB1[⏰ Clock: Opening Strike<br/>03:46 UTC / 09:16 AM IST]:::aws
@@ -36,7 +36,8 @@ graph TD
     Lambda -.->|4. Verify Freshness<br/>Timestamp Liveness Check| Bronze
     Lambda -->|5. Vector Math Calculations<br/>Log Target Positions| Gold
 
-    %% Visual Layout Optimization
-    style AWS_Cloud fill:#fff3e0,stroke:#ffb74d,stroke-width:1px;
-    style GitHub_Platform fill:#eceff1,stroke:#b0bec5,stroke-width:1px;
-    style Storage_Fabric fill:#e8f5e9,stroke:#a5d6a7,stroke-width:1px;
+    %% Transparent Subgraph Styling for Dark Mode Compatibility
+    style AWS_Cloud fill:transparent,stroke:#e68a00,stroke-width:2px,stroke-dasharray: 5 5;
+    style GitHub_Platform fill:transparent,stroke:#768390,stroke-width:2px,stroke-dasharray: 5 5;
+    style Storage_Fabric fill:transparent,stroke:#00a859,stroke-width:2px,stroke-dasharray: 5 5;
+
