@@ -37,17 +37,17 @@ jobs:
       # ==========================================
       # THE SEQUENTIAL EXECUTION CHAIN
       # ==========================================
-      - name: 1️⃣ Run EOD Bronze Ingestion
+      - name:  Run EOD Bronze Ingestion
         env:
           NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
         run: python -u bronze_ingestion.py
           
-      - name: 2️⃣ Execute Silver Layer Transformation
-        env:
-          NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
-        run: python -u spark_silver_layer.py
+      # - name: 2️⃣ Execute Silver Layer Transformation
+      #   env:
+      #     NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
+      #   run: python -u spark_silver_layer.py
 
-      - name: 3️⃣ Run Macro Healer (Cleanup & Validation)
+      - name:  Run Macro Healer (Cleanup & Validation)
         env:
           NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
         run: python -u eod_healer.py
