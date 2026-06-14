@@ -114,3 +114,22 @@ macro_df.write.jdbc(
 )
 print("✅ Concrete Poured. silver_1d_macro table successfully created and updated.")
 spark.stop()
+
+# ==========================================
+# 3. THE GOLD LAYER AUTOMATION (Compute Pushdown)
+# ==========================================
+print("🔄 Triggering Gold Layer Materialized View Refresh...")
+try:
+    conn = psycopg2.connect(
+        host=NEON_HOST, database="neondb", user="neondb_owner", password=db_password, port="5432"
+    )
+    conn.autocommit = True
+    cursor = conn.cursor()
+    # Refresh the materialized view used by the Streamlit dashboard
+    cursor.execute("REFRESH MATERIALIZED VIEW gold_screener_latest;")
+    print("🏆 Gold Layer successfully refreshed! The pipeline is complete.")
+except Exception as e:
+    print(f"❌ Failed to refresh Gold Layer: {e}")
+finally:
+    if 'cursor' in locals(): cursor.close()
+    if 'conn' in locals(): conn.close()
