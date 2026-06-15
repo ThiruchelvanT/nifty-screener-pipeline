@@ -104,8 +104,9 @@ def load_active_portfolio(timeframe):
 def load_daily_executions(timeframe):
     try:
         temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        # 🛡️ THE ARCHITECT'S SHIELD: Added DISTINCT ON (ticker) to suppress duplicate spam
         query = f"""
-            SELECT 
+            SELECT DISTINCT ON (ticker)
                 ticker AS "Ticker",
                 signal_type AS "Action",
                 entry_price AS "Execution Price",
@@ -114,10 +115,15 @@ def load_daily_executions(timeframe):
             FROM gold_signal_ledger
             WHERE target_timeframe = '{timeframe}'
               AND (signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date
-            ORDER BY signal_date DESC;
+            ORDER BY ticker, signal_date DESC;
         """
         df = pd.read_sql(query, temp_engine)
         temp_engine.dispose()
+        
+        # Sort the final clean list by Execution Time so the newest alerts are at the top
+        if not df.empty:
+            df = df.sort_values(by="Execution Time", ascending=False)
+            
         return df
     except Exception:
         return pd.DataFrame()
