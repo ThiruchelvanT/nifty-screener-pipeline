@@ -262,21 +262,29 @@ def load_silver_history(ticker, timeframe):
 def load_etf_sniper_radar():
     try:
         temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        # 🛡️ THE ARCHITECT'S SHIELD: Force uniqueness across your ETF universe
         query = """
-            SELECT 
+            SELECT DISTINCT ON (ticker)
                 ticker AS "ETF Ticker", 
                 TO_CHAR(signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY - HH12:MI AM') AS "Time Locked",
+                signal_date,
                 signal_type AS "Signal Type", 
                 entry_price AS "Entry Price", 
                 target_timeframe AS "Timeframe",
                 verdict AS "Status"
             FROM gold_signal_ledger 
             WHERE ticker IN ('SILVERBEES.NS', 'GOLDBEES.NS', 'NIFTYBEES.NS', 'BANKBEES.NS', 'ITBEES.NS', 'LIQUIDBEES.NS')
-            ORDER BY signal_date DESC 
-            LIMIT 20;
+            ORDER BY ticker, signal_date DESC;
         """
         df = pd.read_sql(query, temp_engine)
         temp_engine.dispose()
+        
+        if not df.empty:
+            # Re-sort by actual date so the newest ETF signals display first in the UI table
+            df = df.sort_values(by="signal_date", ascending=False)
+            # Drop the raw timestamp column so it doesn't clutter the frontend table view
+            df = df.drop(columns=["signal_date"])
+            
         return df
     except Exception as e:
         return pd.DataFrame()
