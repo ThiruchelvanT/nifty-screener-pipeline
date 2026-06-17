@@ -40,3 +40,67 @@ flowchart LR
     S_MACRO -.->|Materialized View| G_SCREENER
     G_LEDGER --> UI
     G_SCREENER --> UI
+```
+```mermaid
+classDiagram
+    %% CONTROLLERS
+    class IntradaySniperAWS {
+        <<Controller>>
+        +check_golden_window()
+        +fetch_micro_batch()
+        +process_vectorized_math()
+        +execute_omni_handshake()
+    }
+    class EODHealerPySpark {
+        <<Controller>>
+        +fetch_macro_batch()
+        +calculate_institutional_nvi()
+        +refresh_materialized_views()
+    }
+
+    %% ENTITIES
+    class BronzeRawOHLCV {
+        <<Entity>>
+        +String ticker
+        +Timestamp datetime
+        +Float open_high_low_close
+        +Float volume
+    }
+    class SilverTechIndicators {
+        <<Entity>>
+        +Float macd_black_red
+        +Float rsi_14
+        +Float rsi_2
+        +Float stochrsi_k_d
+    }
+    class Silver1DMacro {
+        <<Entity>>
+        +Float nvi_black_red
+        +String smart_money_status
+    }
+    class GoldSignalLedger {
+        <<Entity>>
+        +String signal_type
+        +Float entry_price
+        +String verdict (PENDING/WIN/CLOSED)
+        +Float pnl_percentage
+    }
+
+    %% BOUNDARY
+    class TheOracleDashboard {
+        <<Boundary>>
+        +render_screener()
+        +render_xray_sandbox()
+        +calculate_true_win_rate()
+    }
+
+    %% RELATIONSHIPS
+    IntradaySniperAWS --> BronzeRawOHLCV : Reads
+    IntradaySniperAWS --> SilverTechIndicators : Writes
+    IntradaySniperAWS --> GoldSignalLedger : Inserts/Updates
+    EODHealerPySpark --> BronzeRawOHLCV : Reads
+    EODHealerPySpark --> Silver1DMacro : Writes
+    TheOracleDashboard --> GoldSignalLedger : Reads
+    TheOracleDashboard --> Silver1DMacro : Reads
+
+```
