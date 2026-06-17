@@ -227,27 +227,32 @@ def load_silver_history(ticker, timeframe):
         )
         
         if timeframe == '1d':
-            # 🛡️ THE MACRO JOIN: LEFT JOIN ensures candles appear even if math is missing/delayed
+            # 🛡️ THE MACRO JOIN
             query = f"""
             SELECT DISTINCT ON (b.datetime::date) 
                    b.datetime, b.open, b.high, b.low, b.close, 
                    s.macd_black, s.macd_red, s.rsi_2, s.stochrsi_k, s.stochrsi_d, s.rsi_14, 
                    s.nvi_black, s.nvi_red
             FROM bronze_raw_ohlcv b
-            LEFT JOIN silver_1d_macro s ON b.ticker = s.ticker AND b.datetime::date = s.datetime::date
+            LEFT JOIN silver_1d_macro s 
+                   ON b.ticker = s.ticker 
+                  AND b.datetime::date = s.datetime::date
             WHERE b.ticker = '{ticker}' AND b.timeframe = '1d'
             ORDER BY b.datetime::date DESC, b.datetime DESC
             LIMIT 300;
             """
         else:
-            # ⚡ THE INTRADAY JOIN: LEFT JOIN
+            # ⚡ THE INTRADAY JOIN (Titanium Timestamp Casts)
             query = f"""
             SELECT DISTINCT ON (b.datetime) 
                    b.datetime, b.open, b.high, b.low, b.close, 
                    s.macd_black, s.macd_red, s.rsi_2, s.stochrsi_k, s.stochrsi_d, s.rsi_14, 
                    NULL as nvi_black, NULL as nvi_red
             FROM bronze_raw_ohlcv b
-            LEFT JOIN silver_technical_indicators s ON b.ticker = s.ticker AND b.datetime = s.datetime
+            LEFT JOIN silver_technical_indicators s 
+                   ON b.ticker = s.ticker 
+                  AND b.datetime::timestamp = s.datetime::timestamp 
+                  AND s.timeframe = '15m'
             WHERE b.ticker = '{ticker}' AND b.timeframe = '15m'
             ORDER BY b.datetime DESC
             LIMIT 300;
