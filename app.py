@@ -227,20 +227,32 @@ def load_silver_history(ticker, timeframe):
         )
         
         if timeframe == '1d':
-            distinct_col = "datetime::date"
+            # 🛡️ THE MACRO JOIN: LEFT JOIN ensures candles appear even if math is missing/delayed
+            query = f"""
+            SELECT DISTINCT ON (b.datetime::date) 
+                   b.datetime, b.open, b.high, b.low, b.close, 
+                   s.macd_black, s.macd_red, s.rsi_2, s.stochrsi_k, s.stochrsi_d, s.rsi_14, 
+                   s.nvi_black, s.nvi_red
+            FROM bronze_raw_ohlcv b
+            LEFT JOIN silver_1d_macro s ON b.ticker = s.ticker AND b.datetime::date = s.datetime::date
+            WHERE b.ticker = '{ticker}' AND b.timeframe = '1d'
+            ORDER BY b.datetime::date DESC, b.datetime DESC
+            LIMIT 300;
+            """
         else:
-            distinct_col = "datetime"
+            # ⚡ THE INTRADAY JOIN: LEFT JOIN
+            query = f"""
+            SELECT DISTINCT ON (b.datetime) 
+                   b.datetime, b.open, b.high, b.low, b.close, 
+                   s.macd_black, s.macd_red, s.rsi_2, s.stochrsi_k, s.stochrsi_d, s.rsi_14, 
+                   NULL as nvi_black, NULL as nvi_red
+            FROM bronze_raw_ohlcv b
+            LEFT JOIN silver_technical_indicators s ON b.ticker = s.ticker AND b.datetime = s.datetime
+            WHERE b.ticker = '{ticker}' AND b.timeframe = '15m'
+            ORDER BY b.datetime DESC
+            LIMIT 300;
+            """
 
-        query = f"""
-        SELECT DISTINCT ON ({distinct_col}) 
-               datetime, open, high, low, close, macd_black, macd_red, 
-               rsi_2, stochrsi_k, stochrsi_d, rsi_14, 
-               nvi_black, nvi_red
-        FROM silver_technical_indicators
-        WHERE ticker = '{ticker}' AND LOWER(timeframe) = '{timeframe}'
-        ORDER BY {distinct_col} DESC, datetime DESC
-        LIMIT 300;
-        """
         df = pd.read_sql_query(query, conn)
         conn.close()
         
@@ -255,8 +267,9 @@ def load_silver_history(ticker, timeframe):
         
         return df.sort_values(by="datetime", ascending=True)
     except Exception as e:
-        st.error(f"Failed to breach the Silver Vault: {e}")
+        st.error(f"Failed to breach the Dual Vaults: {e}")
         return pd.DataFrame()
+
 
 @st.cache_data(ttl=60) 
 def load_etf_sniper_radar():
