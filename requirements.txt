@@ -1,12 +1,7 @@
-yfinance
-pandas
-pandas-ta
-requests
-openpyxl
 streamlit
+pandas
+yfinance
 psycopg2-binary
 SQLAlchemy
 plotly
-pyspark
-psutil
 fyers-apiv3==3.0.4
