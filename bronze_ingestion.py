@@ -1,51 +1,51 @@
 import os
 import sys
 import pandas as pd
-import yfinance as yf
 from sqlalchemy import create_engine, text
 import requests
 import io
 import time
-import random
-from requests import Session
 from sqlalchemy.dialects.postgresql import insert
+from fyers_apiv3 import fyersModel # ⬅️ ADDED FYERS SDK
 
 # ==========================================
 # 0. THE MODE SWITCH (Command Line Argument)
 # ==========================================
-# If "--intraday" is passed, we skip the heavy 1D pull and only fetch recent 15m data
 is_intraday_mode = "--intraday" in sys.argv
 
 if is_intraday_mode:
-    print("⚡ INTRADAY MODE ACTIVATED: Featherweight fetch to prevent API bans.")
+    print("⚡ INTRADAY MODE ACTIVATED: Featherweight 15m fetch.")
 else:
-    print("🏗️ MACRO MODE ACTIVATED: Heavy historical fetch.")
+    print("🏗️ MACRO MODE ACTIVATED: Heavy 1D historical fetch.")
 
 # ==========================================
-# 1. SETUP AND SECURE CREDENTIALS
+# 1. SETUP CREDENTIALS & FYERS SESSION
 # ==========================================
 db_password = os.getenv("NEON_PASSWORD")
 if not db_password:
     raise ValueError("⚠️ CRITICAL: NEON_PASSWORD environment variable is missing!")
 
+# Pull the Fyers Secrets from GitHub Environments
+client_id = os.getenv("FYERS_CLIENT_ID")
+access_token = os.getenv("FYERS_ACCESS_TOKEN")
+
+if not client_id or not access_token:
+    raise ValueError("⚠️ CRITICAL: Fyers API Credentials missing from environment!")
+
 NEON_HOST = "ep-holy-star-amh8eg8r-pooler.c-5.us-east-1.aws.neon.tech"
 db_url = f"postgresql://neondb_owner:{db_password}@{NEON_HOST}:5432/neondb?sslmode=require"
 engine = create_engine(db_url)
 
+# Initialize the Fyers Client
+fyers = fyersModel.FyersModel(client_id=client_id, is_async=False, token=access_token, log_path="")
+
 # 🛡️ THE GRANDMASTER'S PATCH: Institutional UPSERT Logic
 def postgres_upsert(table, conn, keys, data_iter):
-    """
-    Executes a native PostgreSQL INSERT ON CONFLICT DO NOTHING.
-    This acts as an indestructible shield against Primary Key violations.
-    """
     data = [dict(zip(keys, row)) for row in data_iter]
     insert_stmt = insert(table.table).values(data)
-    
-    # If the row already exists in the vault, silently skip it.
     do_nothing_stmt = insert_stmt.on_conflict_do_nothing(
         index_elements=['ticker', 'timeframe', 'datetime']
     )
-    
     conn.execute(do_nothing_stmt)
 
 # ==========================================
@@ -62,115 +62,88 @@ try:
     response.raise_for_status()
     nifty_df = pd.read_csv(io.StringIO(response.text))
     raw_tickers = nifty_df['Symbol'].tolist()
-    # Format for Yahoo Finance
-    tickers = [f"{sym}.NS" for sym in raw_tickers]
-    tickers.extend(["SILVERBEES.NS", "GOLDBEES.NS"])
-    print(f"✅ Successfully loaded {len(tickers)} tickers.")
+    
+    # FORMAT FOR FYERS: NSE:RELIANCE-EQ
+    fyers_tickers = [f"NSE:{sym}-EQ" for sym in raw_tickers]
+    
+    # Add ETF exceptions (Fyers usually lists ETFs as -EQ as well, but we must map them)
+    etf_list = ["SILVERBEES", "GOLDBEES"]
+    fyers_tickers.extend([f"NSE:{sym}-EQ" for sym in etf_list])
+    
+    # Keep a mapping dictionary so we can save it back to the DB with the Yahoo style .NS format
+    # This prevents your Silver/Gold tables from breaking.
+    ticker_map = {f"NSE:{sym}-EQ": f"{sym}.NS" for sym in raw_tickers + etf_list}
+    
+    print(f"✅ Successfully loaded {len(fyers_tickers)} Fyers tickers.")
 except Exception as e:
     print(f"⚠️ NSE Fetch failed: {e}. Defaulting to core list.")
-    tickers = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ADANIPORTS.NS"]
+    fyers_tickers = ["NSE:RELIANCE-EQ", "NSE:TCS-EQ", "NSE:HDFCBANK-EQ"]
+    ticker_map = {t: t.replace("NSE:", "").replace("-EQ", ".NS") for t in fyers_tickers}
 
 # ==========================================
-# 3. YAHOO FINANCE FETCHING (GUERRILLA EVASION PROTOCOL)
+# 3. FYERS API FETCHING (INSTITUTIONAL PIPELINE)
 # ==========================================
-print(f"🚀 Starting Bronze Ingestion for {len(tickers)} assets...")
+print(f"🚀 Starting Bronze Ingestion for {len(fyers_tickers)} assets...")
 master_df = pd.DataFrame()
 
-# 🛡️ THE DISGUISE: A pool of real human browser signatures
-user_agents = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-]
+def fetch_fyers_history(symbol, resolution, start_date, end_date):
+    """Helper function to pull clean dataframe from Fyers API"""
+    data = {
+        "symbol": symbol,
+        "resolution": str(resolution),
+        "date_format": "1", # 1 means we provide dates as YYYY-MM-DD
+        "range_from": start_date,
+        "range_to": end_date,
+        "cont_flag": "1"
+    }
+    
+    response = fyers.history(data=data)
+    
+    if response['s'] == 'ok':
+        df = pd.DataFrame(response['candles'], columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
+        # Fyers returns epoch timestamps. Convert to IST datetime strings.
+        df['datetime'] = pd.to_datetime(df['datetime'], unit='s').dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata').dt.tz_localize(None)
+        return df
+    else:
+        print(f"⚠️ Failed to fetch {symbol}: {response['message']}")
+        return pd.DataFrame()
 
-# Create a custom session to spoof the headers
-session = Session()
-session.headers.update({
-    'User-Agent': random.choice(user_agents),
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Connection': 'keep-alive',
-})
+# Set date ranges based on mode
+import datetime
+today = datetime.datetime.now().strftime("%Y-%m-%d")
 
-# --- STEP 3A: THE MACRO PULL (Only run if NOT in intraday mode) ---
 if not is_intraday_mode:
-    # ⚡ OPTIMIZATION: We only fetch 5 days now to save memory, relying on the DB for deep history
-    print("📥 Downloading Macro 1d timeframe (Optimized 5-Day Sip)...")
-    data_1d = yf.download(tickers, period="5d", interval="1d", group_by='ticker', threads=True, progress=False, session=session)
-
-    for ticker in tickers:
-        if ticker in data_1d:
-            df = data_1d[ticker].dropna(how='all')
-            if not df.empty:
-                df = df.reset_index()
-                df.columns = [col.lower() for col in df.columns]
-                if 'date' in df.columns: 
-                    df = df.rename(columns={'date': 'datetime'})
-                
-                df['ticker'] = ticker
-                df['timeframe'] = '1d'
-                
-                try:
-                    df = df[['ticker', 'datetime', 'timeframe', 'open', 'high', 'low', 'close', 'volume']]
-                    master_df = pd.concat([master_df, df], ignore_index=True)
-                except KeyError:
-                    continue
-
-# --- STEP 3B: THE INTRADAY PULL (Phalanx Formation & Micro-Batching) ---
-# If Intraday mode, ONLY pull the last 5 days to save bandwidth. Otherwise, pull 60 days.
-intraday_period = "5d" if is_intraday_mode else "60d"
-print(f"📥 Downloading Intraday 15m timeframe (Period: {intraday_period})...")
-intraday_tfs = {"15m": intraday_period}
-
-# 🛡️ MICRO-BATCHING: Shrink the batch size from 100 to 50 to avoid massive parallel spikes
-batch_size = 50
-ticker_batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
-
-for tf_name, period in intraday_tfs.items():
-    for i, batch in enumerate(ticker_batches):
-        print(f"   Fetching {tf_name} Batch {i+1}/{len(ticker_batches)}...")
-        try:
-            # Pass the spoofed session directly into yfinance
-            data = yf.download(batch, period=period, interval=tf_name, group_by='ticker', threads=True, progress=False, session=session)
-            
-            for ticker in batch:
-                if ticker in data:
-                    df = data[ticker].dropna(how='all')
-                    if not df.empty:
-                        df = df.reset_index()
-                        df.columns = [col.lower() for col in df.columns]
-                        if 'datetime' not in df.columns: 
-                            if 'date' in df.columns:
-                                df = df.rename(columns={'date': 'datetime'})
-                        
-                        df['ticker'] = ticker
-                        df['timeframe'] = tf_name
-                        
-                        try:
-                            df = df[['ticker', 'datetime', 'timeframe', 'open', 'high', 'low', 'close', 'volume']]
-                            master_df = pd.concat([master_df, df], ignore_index=True)
-                        except KeyError:
-                            continue
-            
-            # 🛡️ ALGORITHMIC JITTER: Random sleep between 2.1 and 4.7 seconds
-            jitter = random.uniform(2.1, 4.7)
-            time.sleep(jitter)
-            
-            # Rotate the user-agent mid-run to further confuse the WAF
-            session.headers.update({'User-Agent': random.choice(user_agents)})
-            
-        except Exception as e:
-            print(f"   ⚠️ Batch {i+1} failed for {tf_name}: {e}")
+    # --- 1D MACRO PULL (Last 60 Days) ---
+    start_date = (datetime.datetime.now() - datetime.timedelta(days=60)).strftime("%Y-%m-%d")
+    print(f"📥 Downloading Macro 1d timeframe ({start_date} to {today})...")
+    
+    for symbol in fyers_tickers:
+        df = fetch_fyers_history(symbol, "D", start_date, today)
+        if not df.empty:
+            df['ticker'] = ticker_map[symbol]
+            df['timeframe'] = '1d'
+            master_df = pd.concat([master_df, df], ignore_index=True)
+        time.sleep(0.1) # Respect API limits (Fyers allows ~10 req/sec)
+else:
+    # --- 15M INTRADAY PULL (Last 5 Days) ---
+    start_date = (datetime.datetime.now() - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
+    print(f"📥 Downloading Intraday 15m timeframe ({start_date} to {today})...")
+    
+    for symbol in fyers_tickers:
+        df = fetch_fyers_history(symbol, "15", start_date, today)
+        if not df.empty:
+            df['ticker'] = ticker_map[symbol]
+            df['timeframe'] = '15m'
+            master_df = pd.concat([master_df, df], ignore_index=True)
+        time.sleep(0.1) # Respect API limits
 
 # ==========================================
 # 4. SELF-HEALING DELTA LOAD ARCHITECTURE
 # ==========================================
 if not master_df.empty:
-    print(f"📊 Downloaded {len(master_df)} raw rows. Initiating Database Memory Check...")
+    print(f"📊 Downloaded {len(master_df)} raw rows from Fyers. Initiating Database Memory Check...")
     
     try:
-        # 1. Ask Database for its memory: What was the exact closing price on the latest date you have?
         memory_query = """
             SELECT DISTINCT ON (ticker, timeframe) 
                 ticker, timeframe, datetime AS db_max_date, close AS db_close 
@@ -179,91 +152,29 @@ if not master_df.empty:
         """
         db_memory = pd.read_sql(memory_query, engine)
         
-        corrupted_tickers = []
-        
         if not db_memory.empty:
-            master_df['datetime'] = pd.to_datetime(master_df['datetime'], utc=True)
-            db_memory['db_max_date'] = pd.to_datetime(db_memory['db_max_date'], utc=True)
+            master_df['datetime'] = pd.to_datetime(master_df['datetime'])
+            db_memory['db_max_date'] = pd.to_datetime(db_memory['db_max_date'])
             
-            # 2. Merge Yahoo's fresh data with the Database's memory based on the exact same date
-            check_df = master_df.merge(
-                db_memory, 
-                left_on=['ticker', 'timeframe', 'datetime'], 
-                right_on=['ticker', 'timeframe', 'db_max_date'], 
-                how='inner'
-            )
-            
-            # 3. THE SPLIT DETECTOR: Find where Database Close differs from Yahoo Close by > 10%
-            if not check_df.empty:
-                check_df['price_diff_pct'] = abs(check_df['close'] - check_df['db_close']) / check_df['db_close']
-                corrupted_tickers = check_df[check_df['price_diff_pct'] > 0.10]['ticker'].unique().tolist()
-            
-            # ==========================================
-            # 🚨 THE SELF-HEALING PROTOCOL 🚨
-            # ==========================================
-            if corrupted_tickers and not is_intraday_mode:
-                print(f"🚨 ANOMALY DETECTED: {len(corrupted_tickers)} stocks underwent Splits/Adjustments!")
-                print(f"🩹 Triggering Self-Healing Protocol for: {corrupted_tickers}")
-                
-                # A. Vaporize the corrupted history from the Neon DB
-                placeholders = ', '.join([f"'{t}'" for t in corrupted_tickers])
-                with engine.begin() as conn:
-                    conn.execute(text(f"DELETE FROM bronze_raw_ohlcv WHERE ticker IN ({placeholders}) AND timeframe = '1d';"))
-                
-                # B. Re-download 2 Full Years of history ONLY for the corrupted stocks
-                print("📥 Downloading 2-Year Replacement History...")
-                healing_data = yf.download(corrupted_tickers, period="2y", interval="1d", group_by='ticker', threads=True, progress=False, session=session)
-                
-                healing_df = pd.DataFrame()
-                for ticker in corrupted_tickers:
-                    if ticker in healing_data:
-                        df = healing_data[ticker] if len(corrupted_tickers) > 1 else healing_data
-                        df = df.dropna(how='all').reset_index()
-                        df.columns = [col.lower() for col in df.columns]
-                        if 'date' in df.columns: df = df.rename(columns={'date': 'datetime'})
-                        df['ticker'], df['timeframe'] = ticker, '1d'
-                        try:
-                            df = df[['ticker', 'datetime', 'timeframe', 'open', 'high', 'low', 'close', 'volume']]
-                            healing_df = pd.concat([healing_df, df], ignore_index=True)
-                        except: pass
-                
-                # C. Push the healed 2-year history directly into the database
-                if not healing_df.empty:
-                    print("💾 Executing Armored UPSERT for Healed History...")
-                    healing_df.to_sql(
-                        "bronze_raw_ohlcv", 
-                        engine, 
-                        if_exists="append", 
-                        index=False,
-                        method=postgres_upsert,   # ⬅️ Armor Applied
-                        chunksize=2000
-                    )
-                    print(f"✅ Vault Healed: Replaced history for {len(corrupted_tickers)} stocks.")
-                
-            # 4. Standard Delta Filter (Keep only rows newer than db_max_date)
+            # The Delta Filter: Keep only rows newer than db_max_date
             master_df = master_df.merge(db_memory[['ticker', 'timeframe', 'db_max_date']], on=['ticker', 'timeframe'], how='left')
             master_df = master_df[(master_df['datetime'] > master_df['db_max_date']) | (master_df['db_max_date'].isnull())]
             master_df = master_df.drop(columns=['db_max_date'])
             
     except Exception as e:
-        print(f"⚠️ Self-Healing bypassed. Proceeding with standard delta. Error: {e}")
+        print(f"⚠️ Memory check bypassed. Error: {e}")
 
     # 5. Push the standard daily Delta
     if not master_df.empty:
-        # Filter out the tickers we already healed so we don't insert duplicate rows today
-        if 'corrupted_tickers' in locals() and corrupted_tickers:
-            master_df = master_df[~master_df['ticker'].isin(corrupted_tickers)]
-            
         print(f"💾 Pushing {len(master_df)} NEW Delta rows into the Bronze Vault...")
-        if not master_df.empty:
-            master_df.to_sql(
-                "bronze_raw_ohlcv", 
-                engine, 
-                if_exists="append", 
-                index=False,
-                method=postgres_upsert,   # ⬅️ Armor Applied
-                chunksize=2000            # Protects memory during massive inserts
-            )
+        master_df.to_sql(
+            "bronze_raw_ohlcv", 
+            engine, 
+            if_exists="append", 
+            index=False,
+            method=postgres_upsert,
+            chunksize=2000
+        )
         print("✅ Bronze Ingestion Complete!")
     else:
         print("✅ Vault is perfectly up to date. No new rows needed.")
