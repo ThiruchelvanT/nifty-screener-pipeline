@@ -180,7 +180,7 @@ def load_period_performance(timeframe, days):
         st.sidebar.error(f"Curve DB Error: {e}")
         return pd.DataFrame()
 
-# 🛡️ THE FIX: Renamed function to destroy the ghost cache, and removed ALL % symbols from the SQL query.
+# 🛡️ UPDATED: Enterprise Trade Lifecycle Ledger (Fixed Signal Name Trap)
 @st.cache_data(ttl=60)
 def fetch_macro_trade_lifecycle(timeframe, days):
     try:
@@ -216,7 +216,7 @@ def fetch_macro_trade_lifecycle(timeframe, days):
             ) s ON true
             WHERE b.target_timeframe = '{timeframe}'
               AND b.signal_date >= NOW() - INTERVAL '{days} days'
-              AND b.signal_type ~* 'BUY'
+              AND b.signal_type !~* 'SELL' -- 🚨 THE FIX: Match anything that is NOT a sell
             ORDER BY b.signal_date DESC;
         """
         df = pd.read_sql_query(query, conn)
