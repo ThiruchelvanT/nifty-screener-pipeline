@@ -1,15 +1,19 @@
 import os
 import sys
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 import requests
 import io
 import time
+import datetime
+import pytz
 from sqlalchemy.dialects.postgresql import insert
-from fyers_apiv3 import fyersModel # ⬅️ ADDED FYERS SDK
+import yfinance as yf
+from curl_cffi import requests as cffi_requests
+from fyers_apiv3 import fyersModel 
 
 # ==========================================
-# 0. THE MODE SWITCH (Command Line Argument)
+# 0. THE MODE SWITCH
 # ==========================================
 is_intraday_mode = "--intraday" in sys.argv
 
@@ -24,38 +28,62 @@ else:
 db_password = os.getenv("NEON_PASSWORD")
 client_id = os.getenv("FYERS_CLIENT_ID")
 
-if not db_password or not client_id:
-    raise ValueError("⚠️ CRITICAL: Missing DB Password or Client ID in environment!")
+if not db_password:
+    raise ValueError("⚠️ CRITICAL: Missing DB Password in environment!")
 
 NEON_HOST = "ep-holy-star-amh8eg8r-pooler.c-5.us-east-1.aws.neon.tech"
 db_url = f"postgresql://neondb_owner:{db_password}@{NEON_HOST}:5432/neondb?sslmode=require"
 engine = create_engine(db_url)
 
-# ------------------------------------------
-# 1A. PULL TOKEN FROM THE VAULT
-# ------------------------------------------
+# ==========================================
+# 2. INTELLIGENT ROUTER (FYERS VS YAHOO)
+# ==========================================
 import psycopg2
+ist = pytz.timezone('Asia/Kolkata')
+today_ist = datetime.datetime.now(ist).date()
+
+USE_FYERS = False
+access_token = None
+
 try:
     conn = psycopg2.connect(
         host=NEON_HOST, port="5432", dbname="neondb",    
         user="neondb_owner", password=db_password
     )
     cursor = conn.cursor()
-    cursor.execute("SELECT key_value FROM system_config WHERE key_name = 'FYERS_ACCESS_TOKEN';")
-    result = cursor.fetchone()
     
-    if not result or result[0] == 'INITIAL_BLANK_TOKEN' or result[0] == 'blank':
-        raise ValueError("Database Vault contains no valid Fyers Access Token.")
+    # Check Streamlit Router Preference
+    cursor.execute("SELECT key_value FROM system_config WHERE key_name = 'ACTIVE_DATA_SOURCE';")
+    source_res = cursor.fetchone()
+    active_source = source_res[0] if source_res else 'YAHOO'
+    
+    # Check Fyers Token freshness
+    cursor.execute("SELECT key_value, last_updated FROM system_config WHERE key_name = 'FYERS_ACCESS_TOKEN';")
+    token_res = cursor.fetchone()
+    
+    if active_source == 'FYERS' and token_res and token_res[0] not in ('INITIAL_BLANK_TOKEN', 'blank', None):
+        last_updated = token_res[1]
         
-    access_token = result[0]
+        # Ensure timestamp has timezone so we can compare to today
+        if last_updated.tzinfo is None:
+            last_updated = last_updated.replace(tzinfo=pytz.utc)
+            
+        last_updated_ist = last_updated.astimezone(ist).date()
+        
+        if last_updated_ist == today_ist:
+            access_token = token_res[0]
+            USE_FYERS = True
+            print("🟢 ROUTER: Streamlit preference is FYERS. Token is fresh. Initializing API...")
+        else:
+            print("⚠️ ROUTER: Streamlit preference is FYERS, but token is stale (not from today). Falling back to YAHOO.")
+    else:
+        print(f"🟡 ROUTER: Preference is {active_source}. Using YAHOO fallback.")
+        
     conn.close()
 except Exception as e:
-    raise ValueError(f"⚠️ CRITICAL: Failed to breach database vault for token. Error: {e}")
+    print(f"⚠️ DB Config Warning: {e}. Defaulting to YAHOO.")
 
-# Initialize the Fyers Client with the Database Token
-fyers = fyersModel.FyersModel(client_id=client_id, is_async=False, token=access_token, log_path="")
-
-# 🛡️ THE GRANDMASTER'S PATCH: Institutional UPSERT Logic
+# 🛡️ Institutional UPSERT Logic
 def postgres_upsert(table, conn, keys, data_iter):
     data = [dict(zip(keys, row)) for row in data_iter]
     insert_stmt = insert(table.table).values(data)
@@ -65,13 +93,11 @@ def postgres_upsert(table, conn, keys, data_iter):
     conn.execute(do_nothing_stmt)
 
 # ==========================================
-# 2. DYNAMIC NIFTY 500 INGESTION
+# 3. DYNAMIC NIFTY 500 ASSET MAPPER
 # ==========================================
 print("🌐 Fetching live Nifty 500 list from NSE servers...")
 url = "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
+headers = {"User-Agent": "Mozilla/5.0"}
 
 try:
     response = requests.get(url, headers=headers, timeout=10)
@@ -79,85 +105,110 @@ try:
     nifty_df = pd.read_csv(io.StringIO(response.text))
     raw_tickers = nifty_df['Symbol'].tolist()
     
-    # FORMAT FOR FYERS: NSE:RELIANCE-EQ
-    fyers_tickers = [f"NSE:{sym}-EQ" for sym in raw_tickers]
-    
-    # Add ETF exceptions (Fyers usually lists ETFs as -EQ as well, but we must map them)
-    etf_list = ["SILVERBEES", "GOLDBEES"]
-    fyers_tickers.extend([f"NSE:{sym}-EQ" for sym in etf_list])
-    
-    # Keep a mapping dictionary so we can save it back to the DB with the Yahoo style .NS format
-    # This prevents your Silver/Gold tables from breaking.
-    ticker_map = {f"NSE:{sym}-EQ": f"{sym}.NS" for sym in raw_tickers + etf_list}
-    
-    print(f"✅ Successfully loaded {len(fyers_tickers)} Fyers tickers.")
+    # ETF Exceptions
+    etf_list = ["SILVERBEES", "GOLDBEES", "NIFTYBEES", "BANKBEES", "ITBEES", "LIQUIDBEES"]
+    raw_tickers.extend(etf_list)
+    print(f"✅ Successfully loaded {len(raw_tickers)} assets.")
 except Exception as e:
     print(f"⚠️ NSE Fetch failed: {e}. Defaulting to core list.")
-    fyers_tickers = ["NSE:RELIANCE-EQ", "NSE:TCS-EQ", "NSE:HDFCBANK-EQ"]
-    ticker_map = {t: t.replace("NSE:", "").replace("-EQ", ".NS") for t in fyers_tickers}
+    raw_tickers = ["RELIANCE", "TCS", "HDFCBANK", "SILVERBEES"]
 
-# ==========================================
-# 3. FYERS API FETCHING (INSTITUTIONAL PIPELINE)
-# ==========================================
-print(f"🚀 Starting Bronze Ingestion for {len(fyers_tickers)} assets...")
 master_df = pd.DataFrame()
 
-def fetch_fyers_history(symbol, resolution, start_date, end_date):
-    """Helper function to pull clean dataframe from Fyers API"""
-    data = {
-        "symbol": symbol,
-        "resolution": str(resolution),
-        "date_format": "1", # 1 means we provide dates as YYYY-MM-DD
-        "range_from": start_date,
-        "range_to": end_date,
-        "cont_flag": "1"
-    }
+# ==========================================
+# 4A. FYERS INGESTION PROTOCOL
+# ==========================================
+if USE_FYERS:
+    fyers = fyersModel.FyersModel(client_id=client_id, is_async=False, token=access_token, log_path="")
+    fyers_tickers = [f"NSE:{sym}-EQ" for sym in raw_tickers]
+    ticker_map = {f"NSE:{sym}-EQ": f"{sym}.NS" for sym in raw_tickers}
     
-    response = fyers.history(data=data)
-    
-    if response['s'] == 'ok':
-        df = pd.DataFrame(response['candles'], columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
-        # Fyers returns epoch timestamps. Convert to IST datetime strings.
-        df['datetime'] = pd.to_datetime(df['datetime'], unit='s').dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata').dt.tz_localize(None)
-        return df
-    else:
-        print(f"⚠️ Failed to fetch {symbol}: {response['message']}")
+    def fetch_fyers_history(symbol, resolution, start_date, end_date):
+        data = {
+            "symbol": symbol,
+            "resolution": str(resolution),
+            "date_format": "1", 
+            "range_from": start_date,
+            "range_to": end_date,
+            "cont_flag": "1"
+        }
+        response = fyers.history(data=data)
+        if response.get('s') == 'ok':
+            df = pd.DataFrame(response['candles'], columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
+            df['datetime'] = pd.to_datetime(df['datetime'], unit='s').dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata').dt.tz_localize(None)
+            return df
         return pd.DataFrame()
 
-# Set date ranges based on mode
-import datetime
-today = datetime.datetime.now().strftime("%Y-%m-%d")
-
-if not is_intraday_mode:
-    # --- 1D MACRO PULL (Last 60 Days) ---
-    start_date = (datetime.datetime.now() - datetime.timedelta(days=60)).strftime("%Y-%m-%d")
-    print(f"📥 Downloading Macro 1d timeframe ({start_date} to {today})...")
+    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
     
-    for symbol in fyers_tickers:
-        df = fetch_fyers_history(symbol, "D", start_date, today)
-        if not df.empty:
-            df['ticker'] = ticker_map[symbol]
-            df['timeframe'] = '1d'
-            master_df = pd.concat([master_df, df], ignore_index=True)
-        time.sleep(0.1) # Respect API limits (Fyers allows ~10 req/sec)
-else:
-    # --- 15M INTRADAY PULL (Last 5 Days) ---
-    start_date = (datetime.datetime.now() - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
-    print(f"📥 Downloading Intraday 15m timeframe ({start_date} to {today})...")
-    
-    for symbol in fyers_tickers:
-        df = fetch_fyers_history(symbol, "15", start_date, today)
-        if not df.empty:
-            df['ticker'] = ticker_map[symbol]
-            df['timeframe'] = '15m'
-            master_df = pd.concat([master_df, df], ignore_index=True)
-        time.sleep(0.1) # Respect API limits
+    if not is_intraday_mode:
+        start_date = (datetime.datetime.now() - datetime.timedelta(days=60)).strftime("%Y-%m-%d")
+        for symbol in fyers_tickers:
+            df = fetch_fyers_history(symbol, "D", start_date, today_str)
+            if not df.empty:
+                df['ticker'] = ticker_map[symbol]
+                df['timeframe'] = '1d'
+                master_df = pd.concat([master_df, df], ignore_index=True)
+            time.sleep(0.1)
+    else:
+        start_date = (datetime.datetime.now() - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
+        for symbol in fyers_tickers:
+            df = fetch_fyers_history(symbol, "15", start_date, today_str)
+            if not df.empty:
+                df['ticker'] = ticker_map[symbol]
+                df['timeframe'] = '15m'
+                master_df = pd.concat([master_df, df], ignore_index=True)
+            time.sleep(0.1)
 
 # ==========================================
-# 4. SELF-HEALING DELTA LOAD ARCHITECTURE
+# 4B. YAHOO INGESTION PROTOCOL (Ghost Session)
+# ==========================================
+else:
+    ghost_session = cffi_requests.Session(impersonate="chrome")
+    yahoo_tickers = [f"{sym}.NS" for sym in raw_tickers]
+    
+    print(f"📥 Using Yahoo Ghost Downloader for {len(yahoo_tickers)} assets...")
+    
+    if not is_intraday_mode:
+        for symbol in yahoo_tickers:
+            ticker = yf.Ticker(symbol, session=ghost_session)
+            df = ticker.history(period="60d", interval="1d")
+            
+            if not df.empty:
+                df = df.reset_index()
+                date_col = 'Datetime' if 'Datetime' in df.columns else 'Date'
+                df.rename(columns={date_col: 'datetime', 'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
+                
+                if df['datetime'].dt.tz is not None:
+                    df['datetime'] = df['datetime'].dt.tz_convert('Asia/Kolkata').dt.tz_localize(None)
+                    
+                df['ticker'] = symbol
+                df['timeframe'] = '1d'
+                master_df = pd.concat([master_df, df[['ticker', 'timeframe', 'datetime', 'open', 'high', 'low', 'close', 'volume']]], ignore_index=True)
+            time.sleep(0.5) 
+    else:
+        for symbol in yahoo_tickers:
+            ticker = yf.Ticker(symbol, session=ghost_session)
+            df = ticker.history(period="5d", interval="15m")
+            
+            if not df.empty:
+                df = df.reset_index()
+                date_col = 'Datetime' if 'Datetime' in df.columns else 'Date'
+                df.rename(columns={date_col: 'datetime', 'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
+                
+                if df['datetime'].dt.tz is not None:
+                    df['datetime'] = df['datetime'].dt.tz_convert('Asia/Kolkata').dt.tz_localize(None)
+                    
+                df['ticker'] = symbol
+                df['timeframe'] = '15m'
+                master_df = pd.concat([master_df, df[['ticker', 'timeframe', 'datetime', 'open', 'high', 'low', 'close', 'volume']]], ignore_index=True)
+            time.sleep(0.5)
+
+# ==========================================
+# 5. SELF-HEALING DELTA LOAD ARCHITECTURE
 # ==========================================
 if not master_df.empty:
-    print(f"📊 Downloaded {len(master_df)} raw rows from Fyers. Initiating Database Memory Check...")
+    print(f"📊 Downloaded {len(master_df)} raw rows. Initiating Database Memory Check...")
     
     try:
         memory_query = """
@@ -172,7 +223,6 @@ if not master_df.empty:
             master_df['datetime'] = pd.to_datetime(master_df['datetime'])
             db_memory['db_max_date'] = pd.to_datetime(db_memory['db_max_date'])
             
-            # The Delta Filter: Keep only rows newer than db_max_date
             master_df = master_df.merge(db_memory[['ticker', 'timeframe', 'db_max_date']], on=['ticker', 'timeframe'], how='left')
             master_df = master_df[(master_df['datetime'] > master_df['db_max_date']) | (master_df['db_max_date'].isnull())]
             master_df = master_df.drop(columns=['db_max_date'])
@@ -180,7 +230,6 @@ if not master_df.empty:
     except Exception as e:
         print(f"⚠️ Memory check bypassed. Error: {e}")
 
-    # 5. Push the standard daily Delta
     if not master_df.empty:
         print(f"💾 Pushing {len(master_df)} NEW Delta rows into the Bronze Vault...")
         master_df.to_sql(
