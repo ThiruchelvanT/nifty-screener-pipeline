@@ -417,8 +417,9 @@ except Exception as e:
 st.sidebar.divider()
 st.sidebar.subheader("🔑 Fyers API Forge")
 with st.sidebar.expander("Authenticate Broker"):
-    fyers_client_id = st.text_input("App ID (client_id)")
-    fyers_secret = st.text_input("Secret Key", type="password")
+    # 🚨 THE FIX: .strip() destroys any invisible trailing spaces added by copying
+    fyers_client_id = st.text_input("App ID (client_id)").strip()
+    fyers_secret = st.text_input("Secret Key", type="password").strip()
     fyers_redirect = "https://127.0.0.1"
 
     if fyers_client_id and fyers_secret:
@@ -434,7 +435,9 @@ with st.sidebar.expander("Authenticate Broker"):
         st.markdown(f"**1. [🔗 CLICK HERE TO LOGIN]({login_url})**")
         st.caption("Log in. Look at the URL bar on the final page. Copy the text after 'auth_code=' and before '&state'.")
         
-        auth_code = st.text_input("2. Paste Auth Code Here:")
+        # 🚨 THE FIX: Added .strip() to the auth_code as well
+        auth_code = st.text_input("2. Paste Auth Code Here:").strip()
+        
         if st.button("3. Forge Master Token"):
             session.set_token(auth_code)
             response = session.generate_token()
@@ -445,15 +448,25 @@ with st.sidebar.expander("Authenticate Broker"):
                         user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
                     )
                     cursor = conn.cursor()
-                    update_query = """
+                    
+                    update_token = """
                         INSERT INTO system_config (key_name, key_value, last_updated) 
                         VALUES ('FYERS_ACCESS_TOKEN', %s, NOW())
                         ON CONFLICT (key_name) DO UPDATE SET key_value = EXCLUDED.key_value, last_updated = NOW();
                     """
-                    cursor.execute(update_query, (response["access_token"],))
+                    cursor.execute(update_token, (response["access_token"],))
+                    
+                    update_router = """
+                        INSERT INTO system_config (key_name, key_value, last_updated) 
+                        VALUES ('ACTIVE_DATA_SOURCE', 'FYERS', NOW())
+                        ON CONFLICT (key_name) DO UPDATE SET key_value = EXCLUDED.key_value, last_updated = NOW();
+                    """
+                    cursor.execute(update_router)
+                    
                     conn.commit()
                     conn.close()
-                    st.success("✅ Handshake Successful! Token locked in NeonDB Vault.")
+                    st.success("✅ Handshake Successful! Token secured and Data Router switched to FYERS.")
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Token acquired, but DB save failed: {e}")
             else:
