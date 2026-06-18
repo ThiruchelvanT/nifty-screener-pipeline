@@ -21,7 +21,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # ⚡ STRIPPED DOWN: No PySpark, No Java needed for simple ingestion
-          pip install pandas==2.1.4 psycopg2-binary yfinance sqlalchemy requests
+          pip install pandas==2.1.4 psycopg2-binary yfinance sqlalchemy requests fyers-apiv3==3.0.4
           
       - name: 📡 Run Guerrilla Bronze Ingestion (15m)
         env:
