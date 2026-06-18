@@ -48,38 +48,6 @@ auth_code = None
 def run_ghost():
     global auth_code
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context()
-        page = context.new_page()
-
-        print("🌐 Phantom navigating to Fyers Login...")
-        page.goto(login_url)
-
-        # 1. Enter Phone Number / Login ID
-        print("⏳ Waiting for Client ID box...")
-        id_box = page.locator("input[type='text'], input[placeholder*='Client ID'], input[placeholder*='Mobile']").first
-        id_box.wait_for(state="visible", timeout=15000)
-        
-        # 🚨 THE FIX: Type like a human with a 100ms delay between keys
-        id_box.type(FYERS_PHONE, delay=100)
-        print("👤 Typed Client ID like a human.")
-        
-        # 🚨 THE FIX: Wait specifically for the button to become ENABLED, not just visible
-        submit_btn = page.locator("button:visible").first
-        submit_btn.wait_for(state="attached", timeout=10000) # Wait for it to exist in DOM
-        
-        # In Playwright, checking if a button is enabled sometimes requires a small loop if the site's JS is slow
-        for _ in range(10):
-            if submit_btn.is_enabled():
-                break
-            time.sleep(0.5)
-            
-        submit_btn.click()
-        print("🔘 Clicked Submit.")
-
-        def run_ghost():
-    global auth_code
-    with sync_playwright() as p:
         # Launch headless browser (invisible)
         browser = p.chromium.launch(headless=True)
         context = browser.new_context()
@@ -124,24 +92,6 @@ def run_ghost():
         page.keyboard.type(FYERS_PIN, delay=100)
         time.sleep(1)
         page.keyboard.press("Enter")
-
-        # 4. Extract the Payload
-        print("⏳ Waiting for Fyers Server Crash (127.0.0.1 redirect)...")
-        time.sleep(5) 
-        
-        final_url = page.url
-        print(f"📍 Final URL Intercepted: {final_url}")
-        
-        parsed_url = urlparse(final_url)
-        query_params = parse_qs(parsed_url.query)
-        
-        if 'auth_code' in query_params:
-            auth_code = query_params['auth_code'][0]
-            print("✅ Payload Extracted!")
-        else:
-            print("❌ Failed to extract auth_code from URL.")
-            
-        browser.close()
 
         # 4. Extract the Payload
         print("⏳ Waiting for Fyers Server Crash (127.0.0.1 redirect)...")
