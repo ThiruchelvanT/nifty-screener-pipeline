@@ -79,7 +79,9 @@ def run_ghost():
                 break
             page.wait_for_timeout(500)
             if i == 19:
-                raise Exception("CRITICAL: React rejected the Client ID length. Are you SURE the secret has exactly 10 digits and no '+91'?")
+                # 🚨 THE CAMERA: Take a picture of exactly what the browser sees before dying
+                page.screenshot(path="crime_scene.png", full_page=True)
+                raise Exception("CRITICAL: React rejected the Client ID. Look at the crime_scene.png artifact!")
         
         submit_btn.click()
         print("🔘 Clicked ID Submit.")
