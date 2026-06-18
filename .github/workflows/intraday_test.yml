@@ -26,6 +26,9 @@ jobs:
       - name: 📡 Run Guerrilla Bronze Ingestion (15m)
         env:
           NEON_PASSWORD: ${{ secrets.NEON_PASSWORD }}
+          FYERS_CLIENT_ID: ${{ secrets.FYERS_CLIENT_ID }}      
+          FYERS_SECRET_KEY: ${{ secrets.FYERS_SECRET_KEY }}    
+          FYERS_ACCESS_TOKEN: ${{ secrets.FYERS_ACCESS_TOKEN }} 
         run: python -u bronze_ingestion.py --intraday
 
       - name: 🚀 Signal AWS Sniper
