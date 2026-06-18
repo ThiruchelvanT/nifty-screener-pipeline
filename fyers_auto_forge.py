@@ -48,7 +48,6 @@ auth_code = None
 def run_ghost():
     global auth_code
     with sync_playwright() as p:
-        # Spoof a real Windows machine
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -62,13 +61,15 @@ def run_ghost():
         print("⏳ Settling page...")
         page.wait_for_timeout(4000) 
 
-        print("👤 Typing Client ID...")
-        page.locator("input:visible").first.click()
-        page.keyboard.type(FYERS_PHONE, delay=150) 
+        print("👤 Injecting Client ID via Titanium Hack...")
+        id_box = page.locator("input:visible").first
+        id_box.click()
         
-        # 🚨 THE FIX: Press Tab to unfocus the box and force React validation
-        page.keyboard.press("Tab")
-        page.wait_for_timeout(1000)
+        # 🚨 THE TITANIUM HACK: Fill, Space, Backspace, Click Away
+        id_box.fill(FYERS_PHONE)
+        id_box.press("Space")
+        id_box.press("Backspace")
+        page.mouse.click(0, 0) 
 
         print("⏳ Waiting for Login Button to turn blue...")
         submit_btn = page.locator("button[type='submit']:visible, button[id*='Submit']:visible").first
@@ -78,7 +79,7 @@ def run_ghost():
                 break
             page.wait_for_timeout(500)
             if i == 19:
-                raise Exception(f"CRITICAL: Fyers rejected the Client ID length. Button stayed disabled. Check your GitHub FYERS_PHONE secret.")
+                raise Exception(f"CRITICAL: React rejected the Client ID length. Are you SURE the secret has exactly 10 digits and no '+91'?")
         
         submit_btn.click()
         print("🔘 Clicked ID Submit.")
@@ -90,12 +91,14 @@ def run_ghost():
         totp = pyotp.TOTP(TOTP_SECRET)
         current_code = totp.now()
 
-        print("🔐 Injecting TOTP...")
-        page.locator("input:visible").first.click()
-        page.keyboard.type(current_code, delay=150)
+        print("🔐 Injecting TOTP via Titanium Hack...")
+        otp_box = page.locator("input:visible").first
+        otp_box.click()
         
-        page.keyboard.press("Tab")
-        page.wait_for_timeout(1000)
+        otp_box.fill(current_code)
+        otp_box.press("Space")
+        otp_box.press("Backspace")
+        page.mouse.click(0, 0)
 
         print("⏳ Waiting for OTP Button to turn blue...")
         otp_btn = page.locator("button[type='submit']:visible, button[id*='Submit']:visible").first
@@ -104,7 +107,7 @@ def run_ghost():
                 break
             page.wait_for_timeout(500)
             if i == 19:
-                raise Exception("CRITICAL: Fyers rejected the TOTP code. Check your FYERS_TOTP_SECRET.")
+                raise Exception("CRITICAL: React rejected the TOTP code.")
         
         otp_btn.click()
         print("🔘 Clicked OTP Submit.")
@@ -113,12 +116,14 @@ def run_ghost():
         print("⏳ Waiting for PIN screen to render (5s)...")
         page.wait_for_timeout(5000)
 
-        print("🔢 Injecting PIN...")
-        page.locator("input:visible").first.click()
-        page.keyboard.type(FYERS_PIN, delay=150)
+        print("🔢 Injecting PIN via Titanium Hack...")
+        pin_box = page.locator("input:visible").first
+        pin_box.click()
         
-        page.keyboard.press("Tab")
-        page.wait_for_timeout(1000)
+        pin_box.fill(FYERS_PIN)
+        pin_box.press("Space")
+        pin_box.press("Backspace")
+        page.mouse.click(0, 0)
 
         print("⏳ Waiting for PIN Button to turn blue...")
         pin_btn = page.locator("button[type='submit']:visible, button[id*='Submit']:visible").first
@@ -127,7 +132,7 @@ def run_ghost():
                 break
             page.wait_for_timeout(500)
             if i == 19:
-                raise Exception("CRITICAL: Fyers rejected the PIN. Check your FYERS_PIN secret.")
+                raise Exception("CRITICAL: React rejected the PIN.")
             
         pin_btn.click()
         print("🔘 Clicked PIN Submit.")
