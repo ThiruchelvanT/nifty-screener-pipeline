@@ -55,44 +55,60 @@ def run_ghost():
 
         print("🌐 Phantom navigating to Fyers Login...")
         page.goto(login_url)
-        
-        # 🚨 REMOVED the networkidle trap. 
 
         # 1. Enter Phone Number / Login ID
-        # Instead, we tell Playwright to wait specifically for the text box to physically appear on screen.
-        print("⏳ Waiting for Client ID box to render...")
-        page.locator('input[id="fy_client_id"]:visible').wait_for(state="visible", timeout=15000)
+        print("⏳ Waiting for Client ID box...")
+        # Rely on the placeholder text or type attribute instead of fragile IDs
+        page.locator("input[type='text'], input[placeholder*='Client ID'], input[placeholder*='Mobile']").first.wait_for(state="visible", timeout=15000)
+        page.locator("input[type='text'], input[placeholder*='Client ID'], input[placeholder*='Mobile']").first.fill(FYERS_PHONE)
         
-        page.locator('input[id="fy_client_id"]:visible').fill(FYERS_PHONE)
-        page.locator('button[id="clientIdSubmit"]:visible').click()
+        # Click the first visible button (usually 'Continue' or 'Login')
+        page.locator("button:visible").first.click()
         print("👤 Inserted Client ID.")
 
         # 2. Enter TOTP (Mathematical Generation)
         print("⏳ Waiting for OTP fields to render...")
-        page.locator('input[id="first"]:visible').wait_for(state="visible", timeout=15000)
+        # Fyers OTP usually has 6 number-type inputs
+        page.locator("input[type='number'], input[type='password']").first.wait_for(state="visible", timeout=15000)
+        
         totp = pyotp.TOTP(TOTP_SECRET)
         current_code = totp.now()
         
-        for i, digit in enumerate(current_code):
-            box_id = ["first", "second", "third", "fourth", "fifth", "sixth"][i]
-            page.locator(f'input[id="{box_id}"]:visible').fill(digit)
+        # Find all the visible input boxes for the OTP
+        otp_boxes = page.locator("input[type='number']:visible, input[type='password']:visible").all()
         
-        page.locator('button[id="verifyOtpSubmit"]:visible').click()
+        if len(otp_boxes) >= 6:
+            for i, digit in enumerate(current_code):
+                otp_boxes[i].fill(digit)
+        else:
+            # Fallback: if it's a single text box now
+            otp_boxes[0].fill(current_code)
+            
+        # Click the next 'Continue/Submit' button
+        page.locator("button:visible").first.click()
         print("🔐 Mathematical TOTP Inserted.")
 
         # 3. Enter PIN
         print("⏳ Waiting for PIN fields to render...")
-        page.locator('input[id="first"]:visible').wait_for(state="visible", timeout=15000)
-        for i, digit in enumerate(FYERS_PIN):
-            box_id = ["first", "second", "third", "fourth"][i]
-            page.locator(f'input[id="{box_id}"]:visible').fill(digit)
+        time.sleep(2) # Brief pause for UI transition
+        
+        page.locator("input[type='number'], input[type='password']").first.wait_for(state="visible", timeout=15000)
+        
+        pin_boxes = page.locator("input[type='number']:visible, input[type='password']:visible").all()
+        
+        if len(pin_boxes) >= 4:
+             for i, digit in enumerate(FYERS_PIN):
+                 pin_boxes[i].fill(digit)
+        else:
+            # Fallback for single box
+            pin_boxes[0].fill(FYERS_PIN)
             
-        page.locator('button[id="verifyPinSubmit"]:visible').click()
+        page.locator("button:visible").first.click()
         print("🔢 PIN Inserted.")
 
         # 4. Extract the Payload
         print("⏳ Waiting for Fyers Server Crash (127.0.0.1 redirect)...")
-        time.sleep(4) # Give it time to redirect and crash
+        time.sleep(5) # Crucial: Wait for the final redirect
         
         final_url = page.url
         print(f"📍 Final URL Intercepted: {final_url}")
