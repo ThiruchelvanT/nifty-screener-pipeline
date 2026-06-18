@@ -155,8 +155,9 @@ def load_daily_pnl(timeframe):
     except Exception:
         return 0.0
 
+# 🛡️ NEW: Dynamic Lookback Loader for Performance Curve
 @st.cache_data(ttl=300)
-def load_weekly_performance(timeframe):
+def load_period_performance(timeframe, days):
     try:
         temp_engine = create_engine(st.secrets["DATABASE_URL"])
         query = f"""
@@ -165,7 +166,8 @@ def load_weekly_performance(timeframe):
                 SUM(COALESCE(pnl_percentage, 0)) as "Daily PNL (%)"
             FROM gold_signal_ledger
             WHERE target_timeframe = '{timeframe}'
-              AND signal_date >= NOW() - INTERVAL '7 days'
+              AND signal_date >= NOW() - INTERVAL '{days} days'
+              AND verdict != 'PENDING'
             GROUP BY "Date"
             ORDER BY "Date" ASC;
         """
@@ -174,6 +176,51 @@ def load_weekly_performance(timeframe):
         return df
     except Exception:
         return pd.DataFrame()
+
+# 🛡️ NEW: Historical Macro Ledger Fetcher (7 or 30 days)
+@st.cache_data(ttl=60)
+def load_historical_ledger(timeframe, days):
+    try:
+        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        query = f"""
+            SELECT 
+                ticker AS "Ticker",
+                signal_type AS "Action",
+                TO_CHAR(signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY - HH12:MI AM') AS "Buy Time",
+                entry_price AS "Buy Price",
+                verdict AS "Status",
+                COALESCE(pnl_percentage, 0.0) AS "Profit/Loss (%)"
+            FROM gold_signal_ledger
+            WHERE target_timeframe = '{timeframe}'
+              AND signal_date >= NOW() - INTERVAL '{days} days'
+            ORDER BY signal_date DESC;
+        """
+        df = pd.read_sql(query, temp_engine)
+        temp_engine.dispose()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+# 🛡️ NEW: Historical Total PNL Fetcher (7 or 30 days)
+@st.cache_data(ttl=60)
+def load_historical_pnl(timeframe, days):
+    try:
+        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        query = f"""
+            SELECT 
+                COALESCE(ROUND(SUM(pnl_percentage)::numeric, 2), 0.00) as total_pnl
+            FROM gold_signal_ledger
+            WHERE target_timeframe = '{timeframe}' 
+              AND signal_date >= NOW() - INTERVAL '{days} days'
+              AND verdict != 'PENDING';
+        """
+        df = pd.read_sql(query, temp_engine)
+        temp_engine.dispose()
+        if not df.empty and pd.notna(df.iloc[0]['total_pnl']):
+            return float(df.iloc[0]['total_pnl'])
+        return 0.0
+    except Exception:
+        return 0.0
 
 @st.cache_data(ttl=900) 
 def load_gold_data():
@@ -772,7 +819,8 @@ with tab3:
     st.divider()
 
     st.markdown("### 📈 Weekly Performance Curve (Last 7 Days)")
-    df_intra_weekly = load_weekly_performance('15m')
+    # Replaced load_weekly_performance with dynamic period loader specific to Intraday's 7-day view
+    df_intra_weekly = load_period_performance('15m', 7)
     if not df_intra_weekly.empty:
         df_intra_weekly["Cumulative Growth (%)"] = df_intra_weekly["Daily PNL (%)"].cumsum()
         fig_intra = px.line(df_intra_weekly, x="Date", y="Cumulative Growth (%)", title="Intraday Cumulative Variance", markers=True)
@@ -804,29 +852,42 @@ with tab4:
         
     st.divider()
     
-    df_macro_today = load_daily_executions('1d')
-    macro_pnl_today = load_daily_pnl('1d')
+    # 🛠️ THE NEW DYNAMIC HISTORICAL MACRO RADAR
+    st.subheader("📅 Historical Macro Performance")
+    
+    # The Toggle Switch
+    macro_period = st.radio("Select Lookback Period:", ["Last 7 Days", "Last 30 Days"], horizontal=True)
+    days_lookback = 7 if "7" in macro_period else 30
+    
+    df_macro_history = load_historical_ledger('1d', days_lookback)
+    macro_period_pnl = load_historical_pnl('1d', days_lookback)
     
     col3, col4 = st.columns(2)
-    col3.metric("Today's Executions (1D)", len(df_macro_today))
-    col4.metric("Today's Current PNL Ratio", f"{macro_pnl_today:.2f}%", delta=f"{macro_pnl_today:.2f}%" if macro_pnl_today >= 0 else f"{macro_pnl_today:.2f}%")
+    col3.metric(f"Total Executions ({macro_period})", len(df_macro_history))
+    col4.metric(f"Settled PNL ({macro_period})", f"{macro_period_pnl:.2f}%", delta=f"{macro_period_pnl:.2f}%" if macro_period_pnl >= 0 else f"{macro_period_pnl:.2f}%")
     
-    st.markdown("### 📋 Today's Order Book")
-    if not df_macro_today.empty:
-        st.dataframe(df_macro_today, use_container_width=True, hide_index=True)
+    st.markdown(f"### 📋 Trade Ledger ({macro_period})")
+    
+    if not df_macro_history.empty:
+        def style_status(val):
+            if val == 'WIN': return 'color: #26A69A; font-weight: bold;'
+            if val == 'LOSS': return 'color: #EF5350; font-weight: bold;'
+            return 'color: gray;'
+            
+        st.dataframe(df_macro_history.style.map(style_status, subset=['Status']), use_container_width=True, hide_index=True)
     else:
-        st.info("No systemic macro shifts detected or adjustments made today.")
+        st.info(f"No systemic macro shifts or settled trades detected in the {macro_period.lower()}.")
         
     st.divider()
     
-    st.markdown("### 🏛️ Structural Capital Curve (Last 7 Days)")
-    df_macro_weekly = load_weekly_performance('1d')
-    if not df_macro_weekly.empty:
-        df_macro_weekly["Structural Growth (%)"] = df_macro_weekly["Daily PNL (%)"].cumsum()
-        fig_macro = px.area(df_macro_weekly, x="Date", y="Structural Growth (%)", title="Macro Framework Long-Term Equity Curve")
+    st.markdown(f"### 🏛️ Structural Capital Curve ({macro_period})")
+    df_macro_curve = load_period_performance('1d', days_lookback)
+    if not df_macro_curve.empty:
+        df_macro_curve["Structural Growth (%)"] = df_macro_curve["Daily PNL (%)"].cumsum()
+        fig_macro = px.area(df_macro_curve, x="Date", y="Structural Growth (%)", title=f"Macro Framework Long-Term Equity Curve ({macro_period})")
         st.plotly_chart(fig_macro, use_container_width=True)
     else:
-        st.warning("Insufficient baseline data available to plot the 7-day macro position curve.")
+        st.warning(f"Insufficient baseline data available to plot the {macro_period.lower()} macro position curve.")
 
 # ------------------------------------------
 # TAB 5: ETF SNIPER RADAR
