@@ -35,3 +35,10 @@ jobs:
           FYERS_PIN: ${{ secrets.FYERS_PIN }}
           FYERS_TOTP_SECRET: ${{ secrets.FYERS_TOTP_SECRET }}
         run: python -u fyers_auto_forge.py
+
+      - name: 📸 Rescue Crime Scene Photo
+        if: failure() 
+        uses: actions/upload-artifact@v4
+        with:
+          name: phantom-crime-scene
+          path: crime_scene.png
