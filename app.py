@@ -155,7 +155,6 @@ def load_daily_pnl(timeframe):
     except Exception:
         return 0.0
 
-# 🛡️ UPDATED: Dynamic Lookback Loader for Performance Curve
 @st.cache_data(ttl=300)
 def load_period_performance(timeframe, days):
     try:
@@ -181,9 +180,9 @@ def load_period_performance(timeframe, days):
         st.sidebar.error(f"Curve DB Error: {e}")
         return pd.DataFrame()
 
-# 🛡️ UPDATED: Enterprise Trade Lifecycle Ledger (UI Safe Aliases)
+# 🛡️ THE FIX: Renamed function to destroy the ghost cache, and removed ALL % symbols from the SQL query.
 @st.cache_data(ttl=60)
-def load_historical_ledger(timeframe, days):
+def fetch_macro_trade_lifecycle(timeframe, days):
     try:
         conn = psycopg2.connect(
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
@@ -202,7 +201,7 @@ def load_historical_ledger(timeframe, days):
                     ROUND(s.entry_price::numeric, 2), 
                     CASE WHEN b.verdict != 'PENDING' THEN ROUND((b.entry_price * (1 + (b.pnl_percentage / 100)))::numeric, 2) ELSE NULL END
                 ) AS "Sold Price",
-                COALESCE(ROUND(b.pnl_percentage::numeric, 2), 0.00) AS "PNL %",
+                COALESCE(ROUND(b.pnl_percentage::numeric, 2), 0.00) AS "Net Return",
                 b.verdict AS "Status"
             FROM gold_signal_ledger b
             LEFT JOIN LATERAL (
@@ -210,14 +209,14 @@ def load_historical_ledger(timeframe, days):
                 FROM gold_signal_ledger 
                 WHERE ticker = b.ticker 
                   AND target_timeframe = b.target_timeframe 
-                  AND signal_type ILIKE '%SELL%' 
+                  AND signal_type ~* 'SELL' 
                   AND signal_date > b.signal_date 
                 ORDER BY signal_date ASC 
                 LIMIT 1
             ) s ON true
             WHERE b.target_timeframe = '{timeframe}'
               AND b.signal_date >= NOW() - INTERVAL '{days} days'
-              AND b.signal_type NOT ILIKE '%SELL%'
+              AND b.signal_type ~* 'BUY'
             ORDER BY b.signal_date DESC;
         """
         df = pd.read_sql_query(query, conn)
@@ -227,7 +226,6 @@ def load_historical_ledger(timeframe, days):
         st.sidebar.error(f"Ledger DB Error: {e}")
         return pd.DataFrame()
 
-# 🛡️ UPDATED: Historical Total PNL Fetcher (7 or 30 days)
 @st.cache_data(ttl=60)
 def load_historical_pnl(timeframe, days):
     try:
@@ -889,7 +887,7 @@ with tab4:
     macro_period = st.radio("Select Lookback Period:", ["Last 7 Days", "Last 30 Days"], horizontal=True)
     days_lookback = 7 if "7" in macro_period else 30
     
-    df_macro_history = load_historical_ledger('1d', days_lookback)
+    df_macro_history = fetch_macro_trade_lifecycle('1d', days_lookback)
     macro_period_pnl = load_historical_pnl('1d', days_lookback)
     
     col3, col4 = st.columns(2)
