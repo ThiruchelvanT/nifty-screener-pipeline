@@ -6,7 +6,7 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 from sqlalchemy import create_engine
 import os
-from fyers_apiv3 import fyersModel # ⬅️ ADDED FYERS SDK
+from fyers_apiv3 import fyersModel
 
 # ==========================================
 # 1. PAGE CONFIGURATION & STYLING
@@ -51,7 +51,7 @@ def load_ledger_scoreboard():
     except Exception as e:
         return pd.DataFrame()
 
-@st.cache_data(ttl=60) # ⚡ Fast Cache for Live Portfolio
+@st.cache_data(ttl=60)
 def load_active_portfolio(timeframe):
     try:
         conn = psycopg2.connect(
@@ -104,7 +104,6 @@ def load_active_portfolio(timeframe):
 def load_daily_executions(timeframe):
     try:
         temp_engine = create_engine(st.secrets["DATABASE_URL"])
-        # 🛡️ THE ARCHITECT'S SHIELD: Added DISTINCT ON (ticker) to suppress duplicate spam
         query = f"""
             SELECT DISTINCT ON (ticker)
                 ticker AS "Ticker",
@@ -120,7 +119,6 @@ def load_daily_executions(timeframe):
         df = pd.read_sql(query, temp_engine)
         temp_engine.dispose()
         
-        # Sort the final clean list by Execution Time so the newest alerts are at the top
         if not df.empty:
             df = df.sort_values(by="Execution Time", ascending=False)
             
@@ -184,28 +182,24 @@ def load_gold_data():
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
         
-        # 1. Fetch the Screener Data
         query_data = """
         SELECT ticker, latest_close, stochrsi_15m, trend_15m, smart_money_daily 
         FROM gold_screener_latest;
         """
         df = pd.read_sql_query(query_data, conn)
         
-        # 2. Fetch Actual Market Time from Silver
         query_time = "SELECT MAX(datetime) as true_market_time FROM silver_technical_indicators;"
         time_df = pd.read_sql_query(query_time, conn)
         
         conn.close() 
         if df.empty: return None, None
         
-        # 3. The Timezone Translation Engine
         latest_date = time_df['true_market_time'].iloc[0]
         
         if pd.notna(latest_date):
             ts = pd.to_datetime(latest_date)
             if ts.tz is None:
                 ts = ts.tz_localize('UTC')
-                
             ts_ist = ts.tz_convert('Asia/Kolkata')
             formatted_date = ts_ist.strftime('%b %d, %Y - %I:%M %p IST')
             display_text = f"Latest Market Data - {formatted_date}"
@@ -272,7 +266,6 @@ def load_silver_history(ticker, timeframe):
     except Exception as e:
         st.error(f"Failed to breach the Dual Vaults: {e}")
         return pd.DataFrame()
-
 
 @st.cache_data(ttl=60) 
 def load_etf_sniper_radar():
@@ -383,9 +376,42 @@ except Exception as e:
 
 
 # ==========================================
-# 4. SIDEBAR (Global Pulse & API Forge)
+# 4. SIDEBAR (Global Pulse & API Forge & ROUTER)
 # ==========================================
 data_result = load_gold_data()
+
+# 🔀 THE DYNAMIC FALLBACK ROUTER
+st.sidebar.divider()
+st.sidebar.subheader("🔀 Data Source Router")
+try:
+    conn = psycopg2.connect(
+        host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
+        user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
+    )
+    cursor = conn.cursor()
+    cursor.execute("SELECT key_value FROM system_config WHERE key_name = 'ACTIVE_DATA_SOURCE';")
+    res = cursor.fetchone()
+    current_source = res[0] if res else "YAHOO"
+
+    new_source = st.sidebar.radio(
+        "Active Pipeline Source:", 
+        ["YAHOO (Default / Free)", "FYERS (Requires Daily Token)"], 
+        index=0 if current_source == "YAHOO" else 1,
+        help="Select Fyers for premium intraday data. If you forget to forge the token, the pipeline will auto-fallback to Yahoo."
+    )
+    new_source_val = "YAHOO" if "YAHOO" in new_source else "FYERS"
+
+    if new_source_val != current_source:
+        cursor.execute("""
+            INSERT INTO system_config (key_name, key_value, last_updated)
+            VALUES ('ACTIVE_DATA_SOURCE', %s, NOW())
+            ON CONFLICT (key_name) DO UPDATE SET key_value = EXCLUDED.key_value, last_updated = NOW();
+        """, (new_source_val,))
+        conn.commit()
+    conn.close()
+except Exception as e:
+    st.sidebar.warning(f"DB Router Offline: {e}")
+
 
 # 🔑 THE FYERS API FORGE
 st.sidebar.divider()
@@ -413,11 +439,26 @@ with st.sidebar.expander("Authenticate Broker"):
             session.set_token(auth_code)
             response = session.generate_token()
             if "access_token" in response:
-                st.success("✅ Handshake Successful!")
-                st.code(response["access_token"])
-                st.caption("Copy this massive token and save it to your GitHub Secrets as FYERS_ACCESS_TOKEN")
+                try:
+                    conn = psycopg2.connect(
+                        host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
+                        user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
+                    )
+                    cursor = conn.cursor()
+                    update_query = """
+                        INSERT INTO system_config (key_name, key_value, last_updated) 
+                        VALUES ('FYERS_ACCESS_TOKEN', %s, NOW())
+                        ON CONFLICT (key_name) DO UPDATE SET key_value = EXCLUDED.key_value, last_updated = NOW();
+                    """
+                    cursor.execute(update_query, (response["access_token"],))
+                    conn.commit()
+                    conn.close()
+                    st.success("✅ Handshake Successful! Token locked in NeonDB Vault.")
+                except Exception as e:
+                    st.error(f"Token acquired, but DB save failed: {e}")
             else:
                 st.error(f"Failed: {response}")
+
 st.sidebar.divider()
 
 if data_result[0] is None: st.stop() 
@@ -435,7 +476,6 @@ if nifty_proxy is not None:
     st.sidebar.metric("Nifty Health Proxy", "✅ STABLE" if market_bullish else "⚠️ WEAK")
 
 st.sidebar.divider()
-
 
 # ==========================================
 # 5. MAIN UI (Tabs)
@@ -690,7 +730,7 @@ with tab3:
 
 
 # ------------------------------------------
-# TAB 4: MACRO LEDGER (1D)
+# TAB 4: MACRO Ledger (1D)
 # ------------------------------------------
 with tab4:
     st.subheader("🏛️ Structural Allocation & Positions")
@@ -735,7 +775,6 @@ with tab4:
         st.plotly_chart(fig_macro, use_container_width=True)
     else:
         st.warning("Insufficient baseline data available to plot the 7-day macro position curve.")
-
 
 # ------------------------------------------
 # TAB 5: ETF SNIPER RADAR
