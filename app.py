@@ -155,11 +155,14 @@ def load_daily_pnl(timeframe):
     except Exception:
         return 0.0
 
-# 🛡️ NEW: Dynamic Lookback Loader for Performance Curve
+# 🛡️ UPDATED: Dynamic Lookback Loader for Performance Curve
 @st.cache_data(ttl=300)
 def load_period_performance(timeframe, days):
     try:
-        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        conn = psycopg2.connect(
+            host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
+            user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
+        )
         query = f"""
             SELECT 
                 (signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date as "Date",
@@ -171,17 +174,21 @@ def load_period_performance(timeframe, days):
             GROUP BY "Date"
             ORDER BY "Date" ASC;
         """
-        df = pd.read_sql(query, temp_engine)
-        temp_engine.dispose()
+        df = pd.read_sql_query(query, conn)
+        conn.close()
         return df
-    except Exception:
+    except Exception as e:
+        st.sidebar.error(f"Curve DB Error: {e}")
         return pd.DataFrame()
 
-# 🛡️ NEW: Historical Macro Ledger Fetcher (7 or 30 days)
+# 🛡️ UPDATED: Historical Macro Ledger Fetcher (7 or 30 days)
 @st.cache_data(ttl=60)
 def load_historical_ledger(timeframe, days):
     try:
-        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        conn = psycopg2.connect(
+            host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
+            user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
+        )
         query = f"""
             SELECT 
                 ticker AS "Ticker",
@@ -195,17 +202,21 @@ def load_historical_ledger(timeframe, days):
               AND signal_date >= NOW() - INTERVAL '{days} days'
             ORDER BY signal_date DESC;
         """
-        df = pd.read_sql(query, temp_engine)
-        temp_engine.dispose()
+        df = pd.read_sql_query(query, conn)
+        conn.close()
         return df
-    except Exception:
+    except Exception as e:
+        st.sidebar.error(f"Ledger DB Error: {e}")
         return pd.DataFrame()
 
-# 🛡️ NEW: Historical Total PNL Fetcher (7 or 30 days)
+# 🛡️ UPDATED: Historical Total PNL Fetcher (7 or 30 days)
 @st.cache_data(ttl=60)
 def load_historical_pnl(timeframe, days):
     try:
-        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        conn = psycopg2.connect(
+            host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
+            user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
+        )
         query = f"""
             SELECT 
                 COALESCE(ROUND(SUM(pnl_percentage)::numeric, 2), 0.00) as total_pnl
@@ -214,12 +225,13 @@ def load_historical_pnl(timeframe, days):
               AND signal_date >= NOW() - INTERVAL '{days} days'
               AND verdict != 'PENDING';
         """
-        df = pd.read_sql(query, temp_engine)
-        temp_engine.dispose()
+        df = pd.read_sql_query(query, conn)
+        conn.close()
         if not df.empty and pd.notna(df.iloc[0]['total_pnl']):
             return float(df.iloc[0]['total_pnl'])
         return 0.0
-    except Exception:
+    except Exception as e:
+        st.sidebar.error(f"PNL DB Error: {e}")
         return 0.0
 
 @st.cache_data(ttl=900) 
