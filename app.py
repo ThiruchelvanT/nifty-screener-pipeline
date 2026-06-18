@@ -203,34 +203,37 @@ def load_gold_data():
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
-        query = """
-        SELECT ticker, latest_close, stochrsi_15m, trend_15m, smart_money_daily, last_updated
+        
+        # 1. Fetch the Screener Data
+        query_data = """
+        SELECT ticker, latest_close, stochrsi_15m, trend_15m, smart_money_daily 
         FROM gold_screener_latest;
         """
-        df = pd.read_sql_query(query, conn)
+        df = pd.read_sql_query(query_data, conn)
+        
+        # 2. 🛡️ THE NEW ARCHITECTURE: Fetch Actual Market Time from Silver
+        query_time = "SELECT MAX(datetime) as true_market_time FROM silver_technical_indicators;"
+        time_df = pd.read_sql_query(query_time, conn)
+        
         conn.close() 
         if df.empty: return None, None
         
-        latest_date = df['last_updated'].max()
+        # 3. 🌏 The Timezone Translation Engine
+        latest_date = time_df['true_market_time'].iloc[0]
         
-        # 🌏 THE TIMEZONE TRANSLATION ENGINE
         if pd.notna(latest_date):
-            # 1. Convert the raw database value into a Pandas Timestamp
             ts = pd.to_datetime(latest_date)
-            
-            # 2. If it has no timezone attached, explicitly tell Python it is UTC
             if ts.tz is None:
                 ts = ts.tz_localize('UTC')
                 
-            # 3. Convert it to Indian Standard Time
             ts_ist = ts.tz_convert('Asia/Kolkata')
-            
-            # 4. Format it beautifully (e.g., Jun 18, 2026 - 11:45 AM IST)
+            # Changed the label to 'Latest Market Data' for absolute clarity
             formatted_date = ts_ist.strftime('%b %d, %Y - %I:%M %p IST')
+            display_text = f"Latest Market Data - {formatted_date}"
         else:
-            formatted_date = "Unknown"
+            display_text = "Market Data: Unknown"
             
-        return df, f"Cloud Vault - {formatted_date}"
+        return df, display_text
         
     except Exception as e:
         st.error(f"Failed to breach the Gold Vault: {e}")
