@@ -62,10 +62,10 @@ def run_ghost():
         page.wait_for_timeout(4000) 
 
         print("👤 Injecting Client ID via Titanium Hack...")
-        id_box = page.locator("input:visible").first
+        # 🚨 THE FIX: Explicitly target text/tel inputs, ignoring radio buttons
+        id_box = page.locator("input[type='text']:visible, input[type='tel']:visible, input[id='fy_client_id']:visible").first
         id_box.click()
         
-        # 🚨 THE TITANIUM HACK: Fill, Space, Backspace, Click Away
         id_box.fill(FYERS_PHONE)
         id_box.press("Space")
         id_box.press("Backspace")
@@ -79,7 +79,7 @@ def run_ghost():
                 break
             page.wait_for_timeout(500)
             if i == 19:
-                raise Exception(f"CRITICAL: React rejected the Client ID length. Are you SURE the secret has exactly 10 digits and no '+91'?")
+                raise Exception("CRITICAL: React rejected the Client ID length. Are you SURE the secret has exactly 10 digits and no '+91'?")
         
         submit_btn.click()
         print("🔘 Clicked ID Submit.")
@@ -92,7 +92,8 @@ def run_ghost():
         current_code = totp.now()
 
         print("🔐 Injecting TOTP via Titanium Hack...")
-        otp_box = page.locator("input:visible").first
+        # 🚨 THE FIX: Target number/password inputs for OTP
+        otp_box = page.locator("input[type='number']:visible, input[type='password']:visible").first
         otp_box.click()
         
         otp_box.fill(current_code)
@@ -117,7 +118,8 @@ def run_ghost():
         page.wait_for_timeout(5000)
 
         print("🔢 Injecting PIN via Titanium Hack...")
-        pin_box = page.locator("input:visible").first
+        # 🚨 THE FIX: Target number/password inputs for PIN
+        pin_box = page.locator("input[type='number']:visible, input[type='password']:visible").first
         pin_box.click()
         
         pin_box.fill(FYERS_PIN)
