@@ -19,24 +19,40 @@ else:
     print("🏗️ MACRO MODE ACTIVATED: Heavy 1D historical fetch.")
 
 # ==========================================
-# 1. SETUP CREDENTIALS & FYERS SESSION
+# 1. SETUP CREDENTIALS & DB CONNECTION
 # ==========================================
 db_password = os.getenv("NEON_PASSWORD")
-if not db_password:
-    raise ValueError("⚠️ CRITICAL: NEON_PASSWORD environment variable is missing!")
-
-# Pull the Fyers Secrets from GitHub Environments
 client_id = os.getenv("FYERS_CLIENT_ID")
-access_token = os.getenv("FYERS_ACCESS_TOKEN")
 
-if not client_id or not access_token:
-    raise ValueError("⚠️ CRITICAL: Fyers API Credentials missing from environment!")
+if not db_password or not client_id:
+    raise ValueError("⚠️ CRITICAL: Missing DB Password or Client ID in environment!")
 
 NEON_HOST = "ep-holy-star-amh8eg8r-pooler.c-5.us-east-1.aws.neon.tech"
 db_url = f"postgresql://neondb_owner:{db_password}@{NEON_HOST}:5432/neondb?sslmode=require"
 engine = create_engine(db_url)
 
-# Initialize the Fyers Client
+# ------------------------------------------
+# 1A. PULL TOKEN FROM THE VAULT
+# ------------------------------------------
+import psycopg2
+try:
+    conn = psycopg2.connect(
+        host=NEON_HOST, port="5432", dbname="neondb",    
+        user="neondb_owner", password=db_password
+    )
+    cursor = conn.cursor()
+    cursor.execute("SELECT key_value FROM system_config WHERE key_name = 'FYERS_ACCESS_TOKEN';")
+    result = cursor.fetchone()
+    
+    if not result or result[0] == 'INITIAL_BLANK_TOKEN' or result[0] == 'blank':
+        raise ValueError("Database Vault contains no valid Fyers Access Token.")
+        
+    access_token = result[0]
+    conn.close()
+except Exception as e:
+    raise ValueError(f"⚠️ CRITICAL: Failed to breach database vault for token. Error: {e}")
+
+# Initialize the Fyers Client with the Database Token
 fyers = fyersModel.FyersModel(client_id=client_id, is_async=False, token=access_token, log_path="")
 
 # 🛡️ THE GRANDMASTER'S PATCH: Institutional UPSERT Logic
