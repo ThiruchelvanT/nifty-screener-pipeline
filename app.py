@@ -6,8 +6,8 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 from sqlalchemy import create_engine
 import os
-from fyers_apiv3 import fyersModel
 import yfinance as yf
+from fyers_apiv3 import fyersModel
 
 # ==========================================
 # 1. PAGE CONFIGURATION & STYLING
@@ -365,7 +365,7 @@ def load_global_macro_pulse():
     try:
         for name, symbol in tickers.items():
             t = yf.Ticker(symbol)
-            hist = t.history(period="5d") # Pull 5 days to ensure we get at least 2 valid trading days
+            hist = t.history(period="5d")
             if len(hist) >= 2:
                 prev_close = hist['Close'].iloc[-2]
                 current = hist['Close'].iloc[-1]
@@ -374,8 +374,9 @@ def load_global_macro_pulse():
             elif len(hist) == 1:
                  results[name] = {"value": hist['Close'].iloc[-1], "delta": 0.0}
         return results
-    except Exception as e:
+    except Exception:
         return {}
+
 
 # ==========================================
 # 3. TOP LEVEL: BREADTH RADAR
@@ -443,7 +444,6 @@ except Exception as e:
 st.sidebar.divider()
 st.sidebar.subheader("🔑 Fyers API Forge")
 with st.sidebar.expander("Authenticate Broker"):
-    # 🚨 THE FIX: .strip() destroys any invisible trailing spaces added by copying
     fyers_client_id = st.text_input("App ID (client_id)").strip()
     fyers_secret = st.text_input("Secret Key", type="password").strip()
     fyers_redirect = "https://127.0.0.1"
@@ -461,7 +461,6 @@ with st.sidebar.expander("Authenticate Broker"):
         st.markdown(f"**1. [🔗 CLICK HERE TO LOGIN]({login_url})**")
         st.caption("Log in. Look at the URL bar on the final page. Copy the text after 'auth_code=' and before '&state'.")
         
-        # 🚨 THE FIX: Added .strip() to the auth_code as well
         auth_code = st.text_input("2. Paste Auth Code Here:").strip()
         
         if st.button("3. Forge Master Token"):
@@ -516,25 +515,25 @@ if nifty_proxy is not None:
 
 st.sidebar.divider()
 
+# 🌐 ADDED THE GLOBAL MACRO RADAR HERE IN THE SIDEBAR
+st.sidebar.subheader("🌐 Global Macro Radar")
+macro_data = load_global_macro_pulse()
+if macro_data:
+    for asset, data in macro_data.items():
+        # Inverse colors for USD/INR and Crude Oil (Since high oil/dollar is BAD for Indian markets)
+        if asset in ["USD / INR", "Crude Oil"]:
+            st.sidebar.metric(label=asset, value=f"{data['value']:,.2f}", delta=f"{data['delta']:.2f}%", delta_color="inverse")
+        else:
+            st.sidebar.metric(label=asset, value=f"{data['value']:,.2f}", delta=f"{data['delta']:.2f}%", delta_color="normal")
+            
+st.sidebar.divider()
+
+
 # ==========================================
 # 5. MAIN UI (Tabs)
 # ==========================================
 st.title("⚖️ The Market Oracle")
 
-# 🌍 INJECT THE GLOBAL SENTINEL TICKER TAPE HERE
-macro_data = load_global_macro_pulse()
-if macro_data:
-    cols = st.columns(len(macro_data))
-    for i, (asset, data) in enumerate(macro_data.items()):
-        with cols[i]:
-            # Inverse colors for USD/INR and Crude Oil (Since high oil/dollar is BAD for Indian markets)
-            if asset in ["USD / INR", "Crude Oil"]:
-                st.metric(label=asset, value=f"{data['value']:,.2f}", delta=f"{data['delta']:.2f}%", delta_color="inverse")
-            else:
-                st.metric(label=asset, value=f"{data['value']:,.2f}", delta=f"{data['delta']:.2f}%", delta_color="normal")
-st.divider()
-
-# --- Then your tabs continue as normal ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 The Screener", 
     "📈 The X-Ray Sandbox", 
