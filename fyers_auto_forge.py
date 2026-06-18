@@ -77,55 +77,71 @@ def run_ghost():
         submit_btn.click()
         print("🔘 Clicked Submit.")
 
-        # 2. Enter TOTP (Mathematical Generation)
-        print("⏳ Waiting for OTP fields to render...")
+        def run_ghost():
+    global auth_code
+    with sync_playwright() as p:
+        # Launch headless browser (invisible)
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context()
+        page = context.new_page()
+
+        print("🌐 Phantom navigating to Fyers Login...")
+        page.goto(login_url)
+
+        # 1. Enter Phone Number / Login ID
+        print("⏳ Waiting for Client ID box...")
+        id_box = page.locator("input[type='text'], input[placeholder*='Client ID'], input[placeholder*='Mobile']").first
+        id_box.wait_for(state="visible", timeout=15000)
         
-        # 🚨 THE FIX: Moved :visible inside the selector string so it ignores hidden nodes completely
-        page.locator("input[type='number']:visible, input[type='password']:visible").first.wait_for(state="visible", timeout=15000)
+        # Click the box to ensure it has focus, then type
+        id_box.click()
+        page.keyboard.type(FYERS_PHONE, delay=100)
+        print("👤 Typed Client ID.")
+        
+        # Use Keyboard Enter instead of trying to find the submit button
+        page.keyboard.press("Enter")
+        print("🔘 Pressed Enter.")
+
+        # 2. Enter TOTP (Mathematical Generation)
+        print("⏳ Waiting for OTP screen transition (3 seconds)...")
+        time.sleep(3) # Blind wait for the JS transition
         
         totp = pyotp.TOTP(TOTP_SECRET)
         current_code = totp.now()
         
-        otp_boxes = page.locator("input[type='number']:visible, input[type='password']:visible").all()
-        
-        if len(otp_boxes) >= 6:
-            for i, digit in enumerate(current_code):
-                otp_boxes[i].type(digit, delay=50)
-        else:
-            otp_boxes[0].type(current_code, delay=100)
-            
-        otp_submit = page.locator("button:visible").first
-        for _ in range(10):
-            if otp_submit.is_enabled():
-                break
-            time.sleep(0.5)
-            
-        otp_submit.click()
-        print("🔐 Mathematical TOTP Inserted.")
+        # We assume the first OTP box is auto-focused by Fyers. 
+        # We just blast the keys into the ether.
+        print(f"🔐 Injecting TOTP keystrokes...")
+        page.keyboard.type(current_code, delay=100)
+        time.sleep(1) # Let JS register the typing
+        page.keyboard.press("Enter")
 
         # 3. Enter PIN
-        print("⏳ Waiting for PIN fields to render...")
-        time.sleep(2) 
+        print("⏳ Waiting for PIN screen transition (3 seconds)...")
+        time.sleep(3) 
         
-        # 🚨 THE FIX: Applied same optic patch to the PIN section
-        page.locator("input[type='number']:visible, input[type='password']:visible").first.wait_for(state="visible", timeout=15000)
+        print("🔢 Injecting PIN keystrokes...")
+        page.keyboard.type(FYERS_PIN, delay=100)
+        time.sleep(1)
+        page.keyboard.press("Enter")
+
+        # 4. Extract the Payload
+        print("⏳ Waiting for Fyers Server Crash (127.0.0.1 redirect)...")
+        time.sleep(5) 
         
-        pin_boxes = page.locator("input[type='number']:visible, input[type='password']:visible").all()
+        final_url = page.url
+        print(f"📍 Final URL Intercepted: {final_url}")
         
-        if len(pin_boxes) >= 4:
-             for i, digit in enumerate(FYERS_PIN):
-                 pin_boxes[i].type(digit, delay=50)
+        parsed_url = urlparse(final_url)
+        query_params = parse_qs(parsed_url.query)
+        
+        if 'auth_code' in query_params:
+            auth_code = query_params['auth_code'][0]
+            print("✅ Payload Extracted!")
         else:
-            pin_boxes[0].type(FYERS_PIN, delay=100)
+            print("❌ Failed to extract auth_code from URL.")
             
-        pin_submit = page.locator("button:visible").first
-        for _ in range(10):
-            if pin_submit.is_enabled():
-                break
-            time.sleep(0.5)
-            
-        pin_submit.click()
-        print("🔢 PIN Inserted.")
+        browser.close()
 
         # 4. Extract the Payload
         print("⏳ Waiting for Fyers Server Crash (127.0.0.1 redirect)...")
