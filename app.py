@@ -1,12 +1,12 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
 import psycopg2
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 from sqlalchemy import create_engine
 import os
+from fyers_apiv3 import fyersModel # ⬅️ ADDED FYERS SDK
 
 # ==========================================
 # 1. PAGE CONFIGURATION & STYLING
@@ -176,26 +176,6 @@ def load_weekly_performance(timeframe):
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=300) 
-def get_global_indices():
-    indices = {
-        "^DJI": "Dow Jones (US)", "^IXIC": "Nasdaq (US)", "^GSPC": "S&P 500 (US)",
-        "^N225": "Nikkei 225 (JP)", "BTC-USD": "Bitcoin"
-    }
-    data = []
-    for ticker, name in indices.items():
-        try:
-            t = yf.Ticker(ticker)
-            hist = t.history(period="2d")
-            if len(hist) >= 2:
-                current_price = hist['Close'].iloc[-1]
-                prev_price = hist['Close'].iloc[-2]
-                change = ((current_price - prev_price) / prev_price) * 100
-                data.append({"Name": name, "Price": current_price, "Change": change})
-        except:
-            continue
-    return data
-
 @st.cache_data(ttl=900) 
 def load_gold_data():
     try:
@@ -211,14 +191,14 @@ def load_gold_data():
         """
         df = pd.read_sql_query(query_data, conn)
         
-        # 2. 🛡️ THE NEW ARCHITECTURE: Fetch Actual Market Time from Silver
+        # 2. Fetch Actual Market Time from Silver
         query_time = "SELECT MAX(datetime) as true_market_time FROM silver_technical_indicators;"
         time_df = pd.read_sql_query(query_time, conn)
         
         conn.close() 
         if df.empty: return None, None
         
-        # 3. 🌏 The Timezone Translation Engine
+        # 3. The Timezone Translation Engine
         latest_date = time_df['true_market_time'].iloc[0]
         
         if pd.notna(latest_date):
@@ -227,7 +207,6 @@ def load_gold_data():
                 ts = ts.tz_localize('UTC')
                 
             ts_ist = ts.tz_convert('Asia/Kolkata')
-            # Changed the label to 'Latest Market Data' for absolute clarity
             formatted_date = ts_ist.strftime('%b %d, %Y - %I:%M %p IST')
             display_text = f"Latest Market Data - {formatted_date}"
         else:
@@ -248,7 +227,6 @@ def load_silver_history(ticker, timeframe):
         )
         
         if timeframe == '1d':
-            # 🛡️ THE MACRO JOIN
             query = f"""
             SELECT DISTINCT ON (b.datetime::date) 
                    b.datetime, b.open, b.high, b.low, b.close, 
@@ -263,7 +241,6 @@ def load_silver_history(ticker, timeframe):
             LIMIT 300;
             """
         else:
-            # ⚡ THE INTRADAY JOIN (Titanium Timestamp Casts)
             query = f"""
             SELECT DISTINCT ON (b.datetime) 
                    b.datetime, b.open, b.high, b.low, b.close, 
@@ -301,7 +278,6 @@ def load_silver_history(ticker, timeframe):
 def load_etf_sniper_radar():
     try:
         temp_engine = create_engine(st.secrets["DATABASE_URL"])
-        # 🛡️ THE ARCHITECT'S SHIELD: Force uniqueness across your ETF universe
         query = """
             SELECT DISTINCT ON (ticker)
                 ticker AS "ETF Ticker", 
@@ -319,9 +295,7 @@ def load_etf_sniper_radar():
         temp_engine.dispose()
         
         if not df.empty:
-            # Re-sort by actual date so the newest ETF signals display first in the UI table
             df = df.sort_values(by="signal_date", ascending=False)
-            # Drop the raw timestamp column so it doesn't clutter the frontend table view
             df = df.drop(columns=["signal_date"])
             
         return df
@@ -409,10 +383,42 @@ except Exception as e:
 
 
 # ==========================================
-# 4. SIDEBAR (Global Pulse)
+# 4. SIDEBAR (Global Pulse & API Forge)
 # ==========================================
 data_result = load_gold_data()
-global_data = get_global_indices()
+
+# 🔑 THE FYERS API FORGE
+st.sidebar.divider()
+st.sidebar.subheader("🔑 Fyers API Forge")
+with st.sidebar.expander("Authenticate Broker"):
+    fyers_client_id = st.text_input("App ID (client_id)")
+    fyers_secret = st.text_input("Secret Key", type="password")
+    fyers_redirect = "https://127.0.0.1"
+
+    if fyers_client_id and fyers_secret:
+        session = fyersModel.SessionModel(
+            client_id=fyers_client_id, 
+            secret_key=fyers_secret, 
+            redirect_uri=fyers_redirect, 
+            response_type="code", 
+            grant_type="authorization_code"
+        )
+        login_url = session.generate_authcode()
+        
+        st.markdown(f"**1. [🔗 CLICK HERE TO LOGIN]({login_url})**")
+        st.caption("Log in. Look at the URL bar on the final page. Copy the text after 'auth_code=' and before '&state'.")
+        
+        auth_code = st.text_input("2. Paste Auth Code Here:")
+        if st.button("3. Forge Master Token"):
+            session.set_token(auth_code)
+            response = session.generate_token()
+            if "access_token" in response:
+                st.success("✅ Handshake Successful!")
+                st.code(response["access_token"])
+                st.caption("Copy this massive token and save it to your GitHub Secrets as FYERS_ACCESS_TOKEN")
+            else:
+                st.error(f"Failed: {response}")
+st.sidebar.divider()
 
 if data_result[0] is None: st.stop() 
 
@@ -429,9 +435,6 @@ if nifty_proxy is not None:
     st.sidebar.metric("Nifty Health Proxy", "✅ STABLE" if market_bullish else "⚠️ WEAK")
 
 st.sidebar.divider()
-st.sidebar.subheader("International Markets")
-for index in global_data:
-    st.sidebar.metric(label=index['Name'], value=f"{index['Price']:,.2f}", delta=f"{index['Change']:.2f}%")
 
 
 # ==========================================
@@ -439,7 +442,6 @@ for index in global_data:
 # ==========================================
 st.title("⚖️ The Market Oracle")
 
-# Expanding to 5 dedicated tabs to isolate Intraday vs Macro functionality
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 The Screener", 
     "📈 The X-Ray Sandbox", 
@@ -612,14 +614,12 @@ with tab2:
         else:
             st.warning("Historical data is still warming up for this asset.")
 
-
 # ------------------------------------------
 # TAB 3: INTRADAY LEDGER (15m)
 # ------------------------------------------
 with tab3:
     st.subheader("⚡ Intraday Sniper Operations")
 
-    # 1. TOP LEVEL: Today's High-Level KPIs
     df_intra_today = load_daily_executions('15m')
     intra_pnl_today = load_daily_pnl('15m')
     df_intra_portfolio = load_active_portfolio('15m')
@@ -634,7 +634,6 @@ with tab3:
 
     st.divider()
 
-    # 2. THE RADAR: Live Signals Flowing Right Now
     st.markdown("### 📡 Live Signal Radar (The Matrix)")
     st.caption("Displays the real-time computational scores. Tracks targets as they heat up before AWS execution.")
     df_live_signals = load_live_intraday_signals()
@@ -660,7 +659,6 @@ with tab3:
 
     st.divider()
 
-    # 3. ACTIVE OPEN POSITIONS (The Vault)
     st.markdown("### 🟢 Active Open Intraday")
     if not df_intra_portfolio.empty:
         def color_pnl(val):
@@ -673,7 +671,6 @@ with tab3:
 
     st.divider()
 
-    # 4. TODAY's ORDER BOOK (The Ledger)
     st.markdown("### 📋 Today's Order Book")
     if not df_intra_today.empty:
         st.dataframe(df_intra_today, use_container_width=True, hide_index=True)
@@ -682,7 +679,6 @@ with tab3:
 
     st.divider()
 
-    # 5. HISTORICAL CURVE
     st.markdown("### 📈 Weekly Performance Curve (Last 7 Days)")
     df_intra_weekly = load_weekly_performance('15m')
     if not df_intra_weekly.empty:
@@ -699,7 +695,6 @@ with tab3:
 with tab4:
     st.subheader("🏛️ Structural Allocation & Positions")
     
-    # 1. Active Open Positions for Macro
     df_macro_portfolio = load_active_portfolio('1d')
     if not df_macro_portfolio.empty:
         macro_avg_pnl = df_macro_portfolio["Unrealized PNL (%)"].mean()
@@ -717,7 +712,6 @@ with tab4:
         
     st.divider()
     
-    # 2. Today's Execution Ledger
     df_macro_today = load_daily_executions('1d')
     macro_pnl_today = load_daily_pnl('1d')
     
@@ -733,7 +727,6 @@ with tab4:
         
     st.divider()
     
-    # 3. Weekly Curve
     st.markdown("### 🏛️ Structural Capital Curve (Last 7 Days)")
     df_macro_weekly = load_weekly_performance('1d')
     if not df_macro_weekly.empty:
