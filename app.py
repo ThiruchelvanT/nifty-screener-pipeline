@@ -212,8 +212,26 @@ def load_gold_data():
         if df.empty: return None, None
         
         latest_date = df['last_updated'].max()
-        if not isinstance(latest_date, str): latest_date = latest_date.strftime('%Y-%m-%d %H:%M')
-        return df, f"Cloud Vault - {latest_date}"
+        
+        # 🌏 THE TIMEZONE TRANSLATION ENGINE
+        if pd.notna(latest_date):
+            # 1. Convert the raw database value into a Pandas Timestamp
+            ts = pd.to_datetime(latest_date)
+            
+            # 2. If it has no timezone attached, explicitly tell Python it is UTC
+            if ts.tz is None:
+                ts = ts.tz_localize('UTC')
+                
+            # 3. Convert it to Indian Standard Time
+            ts_ist = ts.tz_convert('Asia/Kolkata')
+            
+            # 4. Format it beautifully (e.g., Jun 18, 2026 - 11:45 AM IST)
+            formatted_date = ts_ist.strftime('%b %d, %Y - %I:%M %p IST')
+        else:
+            formatted_date = "Unknown"
+            
+        return df, f"Cloud Vault - {formatted_date}"
+        
     except Exception as e:
         st.error(f"Failed to breach the Gold Vault: {e}")
         return None, None
