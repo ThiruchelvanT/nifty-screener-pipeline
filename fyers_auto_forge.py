@@ -79,7 +79,9 @@ def run_ghost():
 
         # 2. Enter TOTP (Mathematical Generation)
         print("⏳ Waiting for OTP fields to render...")
-        page.locator("input[type='number'], input[type='password']").first.wait_for(state="visible", timeout=15000)
+        
+        # 🚨 THE FIX: Moved :visible inside the selector string so it ignores hidden nodes completely
+        page.locator("input[type='number']:visible, input[type='password']:visible").first.wait_for(state="visible", timeout=15000)
         
         totp = pyotp.TOTP(TOTP_SECRET)
         current_code = totp.now()
@@ -88,12 +90,10 @@ def run_ghost():
         
         if len(otp_boxes) >= 6:
             for i, digit in enumerate(current_code):
-                # Type each digit like a human
                 otp_boxes[i].type(digit, delay=50)
         else:
             otp_boxes[0].type(current_code, delay=100)
             
-        # Wait for the JS to validate the 6 digits and enable the button
         otp_submit = page.locator("button:visible").first
         for _ in range(10):
             if otp_submit.is_enabled():
@@ -107,7 +107,8 @@ def run_ghost():
         print("⏳ Waiting for PIN fields to render...")
         time.sleep(2) 
         
-        page.locator("input[type='number'], input[type='password']").first.wait_for(state="visible", timeout=15000)
+        # 🚨 THE FIX: Applied same optic patch to the PIN section
+        page.locator("input[type='number']:visible, input[type='password']:visible").first.wait_for(state="visible", timeout=15000)
         
         pin_boxes = page.locator("input[type='number']:visible, input[type='password']:visible").all()
         
