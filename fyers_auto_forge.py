@@ -9,16 +9,16 @@ from playwright.sync_api import sync_playwright
 print("👻 Waking the Phantom Browser...")
 
 # ==========================================
-# 1. LOAD THE CREDENTIALS
+# 1. LOAD & SANITIZE THE CREDENTIALS
 # ==========================================
-# These will be passed from GitHub Secrets
-CLIENT_ID = os.getenv("FYERS_CLIENT_ID")
-SECRET_KEY = os.getenv("FYERS_SECRET_KEY")
-FYERS_PHONE = os.getenv("FYERS_PHONE")        # Your Fyers Login ID / Phone Number
-FYERS_PIN = os.getenv("FYERS_PIN")            # Your 4-digit Fyers PIN
-TOTP_SECRET = os.getenv("FYERS_TOTP_SECRET")  # The raw base32 Mathematical Key you extracted
+CLIENT_ID = os.getenv("FYERS_CLIENT_ID", "").strip()
+SECRET_KEY = os.getenv("FYERS_SECRET_KEY", "").strip()
+# 🚨 THE FIX: .strip() removes accidental invisible spaces from GitHub Secrets
+FYERS_PHONE = os.getenv("FYERS_PHONE", "").strip()        
+FYERS_PIN = os.getenv("FYERS_PIN", "").strip()            
+TOTP_SECRET = os.getenv("FYERS_TOTP_SECRET", "").strip()  
 
-DB_PASSWORD = os.getenv("NEON_PASSWORD")
+DB_PASSWORD = os.getenv("NEON_PASSWORD", "").strip()
 NEON_HOST = "ep-holy-star-amh8eg8r-pooler.c-5.us-east-1.aws.neon.tech"
 
 if not all([CLIENT_ID, SECRET_KEY, FYERS_PHONE, FYERS_PIN, TOTP_SECRET, DB_PASSWORD]):
@@ -48,7 +48,7 @@ auth_code = None
 def run_ghost():
     global auth_code
     with sync_playwright() as p:
-        # Spoof a real Windows machine to prevent basic bot-blocking
+        # Spoof a real Windows machine
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -63,16 +63,22 @@ def run_ghost():
         page.wait_for_timeout(4000) 
 
         print("👤 Typing Client ID...")
-        # Find the very first visible text input on the screen and click it to ensure focus
         page.locator("input:visible").first.click()
         page.keyboard.type(FYERS_PHONE, delay=150) 
+        
+        # 🚨 THE FIX: Press Tab to unfocus the box and force React validation
+        page.keyboard.press("Tab")
+        page.wait_for_timeout(1000)
 
         print("⏳ Waiting for Login Button to turn blue...")
         submit_btn = page.locator("button[type='submit']:visible, button[id*='Submit']:visible").first
-        for _ in range(20): # Check for up to 10 seconds
-            if not submit_btn.is_disabled():
+        
+        for i in range(20): 
+            if submit_btn.is_enabled():
                 break
             page.wait_for_timeout(500)
+            if i == 19:
+                raise Exception(f"CRITICAL: Fyers rejected the Client ID length. Button stayed disabled. Check your GitHub FYERS_PHONE secret.")
         
         submit_btn.click()
         print("🔘 Clicked ID Submit.")
@@ -87,13 +93,18 @@ def run_ghost():
         print("🔐 Injecting TOTP...")
         page.locator("input:visible").first.click()
         page.keyboard.type(current_code, delay=150)
+        
+        page.keyboard.press("Tab")
+        page.wait_for_timeout(1000)
 
         print("⏳ Waiting for OTP Button to turn blue...")
         otp_btn = page.locator("button[type='submit']:visible, button[id*='Submit']:visible").first
-        for _ in range(20):
-            if not otp_btn.is_disabled():
+        for i in range(20):
+            if otp_btn.is_enabled():
                 break
             page.wait_for_timeout(500)
+            if i == 19:
+                raise Exception("CRITICAL: Fyers rejected the TOTP code. Check your FYERS_TOTP_SECRET.")
         
         otp_btn.click()
         print("🔘 Clicked OTP Submit.")
@@ -105,20 +116,25 @@ def run_ghost():
         print("🔢 Injecting PIN...")
         page.locator("input:visible").first.click()
         page.keyboard.type(FYERS_PIN, delay=150)
+        
+        page.keyboard.press("Tab")
+        page.wait_for_timeout(1000)
 
         print("⏳ Waiting for PIN Button to turn blue...")
         pin_btn = page.locator("button[type='submit']:visible, button[id*='Submit']:visible").first
-        for _ in range(20):
-            if not pin_btn.is_disabled():
+        for i in range(20):
+            if pin_btn.is_enabled():
                 break
             page.wait_for_timeout(500)
+            if i == 19:
+                raise Exception("CRITICAL: Fyers rejected the PIN. Check your FYERS_PIN secret.")
             
         pin_btn.click()
         print("🔘 Clicked PIN Submit.")
 
         # --- STEP 4: ACTIVE URL SNIFFER ---
         print("⏳ Polling for final redirect payload...")
-        for _ in range(40): # Poll actively for up to 20 seconds
+        for _ in range(40): 
             current_url = page.url
             if 'auth_code=' in current_url:
                 print("🎯 Target acquired in URL!")
