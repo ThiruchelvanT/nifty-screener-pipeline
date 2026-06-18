@@ -41,64 +41,92 @@ login_url = session.generate_authcode()
 print("🔗 Generated Initial Auth URL.")
 
 # ==========================================
-# 3. LAUNCH THE PHANTOM (Playwright)
+# 3. THE AEGIS PHANTOM PROTOCOL
 # ==========================================
 auth_code = None
 
 def run_ghost():
     global auth_code
     with sync_playwright() as p:
-        # Launch headless browser (invisible)
+        # Spoof a real Windows machine to prevent basic bot-blocking
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context()
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
         page = context.new_page()
 
-        print("🌐 Phantom navigating to Fyers Login...")
+        print("🌐 Navigating to Fyers...")
         page.goto(login_url)
 
-        # 1. Enter Phone Number / Login ID
-        print("⏳ Waiting for Client ID box...")
-        id_box = page.locator("input[type='text'], input[placeholder*='Client ID'], input[placeholder*='Mobile']").first
-        id_box.wait_for(state="visible", timeout=15000)
-        
-        # Click the box to ensure it has focus, then type
-        id_box.click()
-        page.keyboard.type(FYERS_PHONE, delay=100)
-        print("👤 Typed Client ID.")
-        
-        # Use Keyboard Enter instead of trying to find the submit button
-        page.keyboard.press("Enter")
-        print("🔘 Pressed Enter.")
+        # --- STEP 1: CLIENT ID ---
+        print("⏳ Settling page...")
+        page.wait_for_timeout(4000) 
 
-        # 2. Enter TOTP (Mathematical Generation)
-        print("⏳ Waiting for OTP screen transition (3 seconds)...")
-        time.sleep(3) # Blind wait for the JS transition
+        print("👤 Typing Client ID...")
+        # Find the very first visible text input on the screen and click it to ensure focus
+        page.locator("input:visible").first.click()
+        page.keyboard.type(FYERS_PHONE, delay=150) 
+
+        print("⏳ Waiting for Login Button to turn blue...")
+        submit_btn = page.locator("button[type='submit']:visible, button[id*='Submit']:visible").first
+        for _ in range(20): # Check for up to 10 seconds
+            if not submit_btn.is_disabled():
+                break
+            page.wait_for_timeout(500)
         
+        submit_btn.click()
+        print("🔘 Clicked ID Submit.")
+
+        # --- STEP 2: TOTP ---
+        print("⏳ Waiting for OTP screen to render (5s)...")
+        page.wait_for_timeout(5000)
+
         totp = pyotp.TOTP(TOTP_SECRET)
         current_code = totp.now()
-        
-        # We assume the first OTP box is auto-focused by Fyers. 
-        # We just blast the keys into the ether.
-        print(f"🔐 Injecting TOTP keystrokes...")
-        page.keyboard.type(current_code, delay=100)
-        time.sleep(1) # Let JS register the typing
-        page.keyboard.press("Enter")
 
-        # 3. Enter PIN
-        print("⏳ Waiting for PIN screen transition (3 seconds)...")
-        time.sleep(3) 
-        
-        print("🔢 Injecting PIN keystrokes...")
-        page.keyboard.type(FYERS_PIN, delay=100)
-        time.sleep(1)
-        page.keyboard.press("Enter")
+        print("🔐 Injecting TOTP...")
+        page.locator("input:visible").first.click()
+        page.keyboard.type(current_code, delay=150)
 
-        # 4. Extract the Payload
-        print("⏳ Waiting for Fyers Server Crash (127.0.0.1 redirect)...")
-        time.sleep(5) 
+        print("⏳ Waiting for OTP Button to turn blue...")
+        otp_btn = page.locator("button[type='submit']:visible, button[id*='Submit']:visible").first
+        for _ in range(20):
+            if not otp_btn.is_disabled():
+                break
+            page.wait_for_timeout(500)
         
+        otp_btn.click()
+        print("🔘 Clicked OTP Submit.")
+
+        # --- STEP 3: PIN ---
+        print("⏳ Waiting for PIN screen to render (5s)...")
+        page.wait_for_timeout(5000)
+
+        print("🔢 Injecting PIN...")
+        page.locator("input:visible").first.click()
+        page.keyboard.type(FYERS_PIN, delay=150)
+
+        print("⏳ Waiting for PIN Button to turn blue...")
+        pin_btn = page.locator("button[type='submit']:visible, button[id*='Submit']:visible").first
+        for _ in range(20):
+            if not pin_btn.is_disabled():
+                break
+            page.wait_for_timeout(500)
+            
+        pin_btn.click()
+        print("🔘 Clicked PIN Submit.")
+
+        # --- STEP 4: ACTIVE URL SNIFFER ---
+        print("⏳ Polling for final redirect payload...")
+        for _ in range(40): # Poll actively for up to 20 seconds
+            current_url = page.url
+            if 'auth_code=' in current_url:
+                print("🎯 Target acquired in URL!")
+                break
+            page.wait_for_timeout(500)
+
         final_url = page.url
-        print(f"📍 Final URL Intercepted: {final_url}")
+        print(f"📍 Final Intercept: {final_url}")
         
         parsed_url = urlparse(final_url)
         query_params = parse_qs(parsed_url.query)
@@ -140,7 +168,6 @@ try:
     )
     cursor = conn.cursor()
     
-    # Securely update the vault
     update_query = """
         UPDATE system_config 
         SET key_value = %s, last_updated = NOW() 
