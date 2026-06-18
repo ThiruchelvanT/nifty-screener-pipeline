@@ -57,33 +57,34 @@ def run_ghost():
         page.goto(login_url)
 
         # 1. Enter Phone Number / Login ID
-        page.wait_for_selector('input[id="fy_client_id"]')
-        page.fill('input[id="fy_client_id"]', FYERS_PHONE)
-        page.click('button[id="clientIdSubmit"]')
+        # The 'state="visible"' tells Playwright to ignore the hidden mobile layout
+        page.wait_for_selector('input[id="fy_client_id"]', state="visible")
+        page.locator('input[id="fy_client_id"]').filter(has_text="").first.fill(FYERS_PHONE)
+        page.locator('button[id="clientIdSubmit"]').filter(has_text="").first.click()
         print("👤 Inserted Client ID.")
 
         # 2. Enter TOTP (Mathematical Generation)
-        page.wait_for_selector('input[id="first"]')
+        # Using a more robust locator for the OTP boxes
+        page.wait_for_selector('input[id="first"]', state="visible")
         totp = pyotp.TOTP(TOTP_SECRET)
         current_code = totp.now()
         
-        # Fyers TOTP input has 6 separate boxes, we must type them sequentially
         for i, digit in enumerate(current_code):
             box_id = ["first", "second", "third", "fourth", "fifth", "sixth"][i]
-            page.fill(f'input[id="{box_id}"]', digit)
+            # Use 'nth(0)' to ensure we grab the visible desktop box, not the mobile one
+            page.locator(f'input[id="{box_id}"]').nth(0).fill(digit)
         
-        page.click('button[id="verifyOtpSubmit"]')
+        page.locator('button[id="verifyOtpSubmit"]').nth(0).click()
         print("🔐 Mathematical TOTP Inserted.")
 
         # 3. Enter PIN
-        page.wait_for_selector('input[id="first"]')
+        page.wait_for_selector('input[id="first"]', state="visible")
         for i, digit in enumerate(FYERS_PIN):
             box_id = ["first", "second", "third", "fourth"][i]
-            page.fill(f'input[id="{box_id}"]', digit)
+            page.locator(f'input[id="{box_id}"]').nth(0).fill(digit)
             
-        page.click('button[id="verifyPinSubmit"]')
+        page.locator('button[id="verifyPinSubmit"]').nth(0).click()
         print("🔢 PIN Inserted.")
-
         # 4. Extract the Payload
         print("⏳ Waiting for Fyers Server Crash (127.0.0.1 redirect)...")
         time.sleep(3) # Give it time to redirect and crash
