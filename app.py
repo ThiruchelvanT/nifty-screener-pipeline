@@ -181,7 +181,7 @@ def load_period_performance(timeframe, days):
         st.sidebar.error(f"Curve DB Error: {e}")
         return pd.DataFrame()
 
-# 🛡️ UPDATED: Enterprise Trade Lifecycle Ledger (Stitches Buy & Sell onto one row)
+# 🛡️ UPDATED: Enterprise Trade Lifecycle Ledger (UI Safe Aliases)
 @st.cache_data(ttl=60)
 def load_historical_ledger(timeframe, days):
     try:
@@ -189,7 +189,6 @@ def load_historical_ledger(timeframe, days):
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
-        # The LATERAL JOIN finds the Buy, then hunts for the corresponding Sell
         query = f"""
             SELECT 
                 b.ticker AS "Ticker",
@@ -203,7 +202,7 @@ def load_historical_ledger(timeframe, days):
                     ROUND(s.entry_price::numeric, 2), 
                     CASE WHEN b.verdict != 'PENDING' THEN ROUND((b.entry_price * (1 + (b.pnl_percentage / 100)))::numeric, 2) ELSE NULL END
                 ) AS "Sold Price",
-                COALESCE(ROUND(b.pnl_percentage::numeric, 2), 0.00) AS "Profit/Loss (%)",
+                COALESCE(ROUND(b.pnl_percentage::numeric, 2), 0.00) AS "PNL %",
                 b.verdict AS "Status"
             FROM gold_signal_ledger b
             LEFT JOIN LATERAL (
@@ -900,12 +899,12 @@ with tab4:
     st.markdown(f"### 📋 Trade Ledger ({macro_period})")
     
     if not df_macro_history.empty:
-        def style_status(val):
-            if val == 'WIN': return 'color: #26A69A; font-weight: bold;'
-            if val == 'LOSS': return 'color: #EF5350; font-weight: bold;'
-            return 'color: gray;'
-            
-        st.dataframe(df_macro_history.style.map(style_status, subset=['Status']), use_container_width=True, hide_index=True)
+        # 🚨 THE FIX: Rendering the raw dataframe without Pandas Styler to prevent column dropping
+        st.dataframe(
+            df_macro_history, 
+            use_container_width=True, 
+            hide_index=True
+        )
     else:
         st.info(f"No systemic macro shifts or settled trades detected in the {macro_period.lower()}.")
         
