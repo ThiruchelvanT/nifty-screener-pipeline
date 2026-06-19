@@ -143,7 +143,7 @@ def load_daily_pnl(timeframe):
     except Exception:
         return 0.0
 
-# 🛡️ UPDATED: Foolproof Execution Logic to handle row overwrites
+# 🛡️ UPDATED: Omni-Directional Executions (Now physically includes the Exit Time column!)
 @st.cache_data(ttl=60)
 def load_daily_executions(timeframe):
     try:
@@ -152,48 +152,60 @@ def load_daily_executions(timeframe):
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
         query = f"""
-            WITH raw_ledger AS (
-                SELECT 
-                    ticker,
-                    signal_type,
-                    entry_price,
-                    signal_date,
-                    verdict,
-                    pnl_percentage,
-                    target_timeframe
-                FROM gold_signal_ledger
-                WHERE target_timeframe = '{timeframe}'
-                  AND signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+            WITH today_activity AS (
+                SELECT DISTINCT ON (g.ticker)
+                    g.ticker AS "Ticker",
+                    COALESCE(
+                        (SELECT signal_type FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1),
+                        g.signal_type
+                    ) AS "Action",
+                    COALESCE(
+                        CASE WHEN g.signal_type !~* 'SELL' THEN ROUND(g.entry_price::numeric, 2) ELSE NULL END,
+                        (SELECT ROUND(entry_price::numeric, 2) FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1)
+                    ) AS "Execution Price",
+                    COALESCE(
+                        CASE WHEN g.signal_type ~* 'SELL' THEN ROUND(g.entry_price::numeric, 2) ELSE NULL END,
+                        (SELECT ROUND(entry_price::numeric, 2) FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1)
+                    ) AS "Exit Price",
+                    TO_CHAR(
+                        COALESCE(
+                            CASE WHEN g.signal_type !~* 'SELL' THEN g.signal_date ELSE NULL END,
+                            (SELECT signal_date FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1),
+                            g.signal_date
+                        ), 'HH12:MI AM'
+                    ) AS "Execution Time",
+                    
+                    -- 🚨 THE FIX: Actually extracting the Exit Time from the database!
+                    COALESCE(
+                        TO_CHAR(
+                            CASE WHEN g.signal_type ~* 'SELL' THEN g.signal_date ELSE NULL END,
+                            'HH12:MI AM'
+                        ),
+                        (SELECT TO_CHAR(signal_date, 'HH12:MI AM') FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1),
+                        'Active'
+                    ) AS "Exit Time",
+                    
+                    g.verdict AS "Status",
+                    g.pnl_percentage
+                FROM gold_signal_ledger g
+                WHERE g.target_timeframe = '{timeframe}'
+                  AND g.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+                ORDER BY g.ticker, g.signal_date DESC
             )
             SELECT 
-                r.ticker AS "Ticker",
-                r.signal_type AS "Action",
-                
-                -- Attempt to find the original Buy Price. If not found, fall back to current row's entry_price
+                "Ticker",
+                "Action",
+                "Execution Price",
+                "Exit Price",
+                "Execution Time",
+                "Exit Time", 
+                "Status",
                 COALESCE(
-                    (SELECT ROUND(entry_price::numeric, 2) 
-                     FROM gold_signal_ledger 
-                     WHERE ticker = r.ticker 
-                       AND target_timeframe = r.target_timeframe 
-                       AND signal_type !~* 'SELL' 
-                       AND signal_date <= r.signal_date 
-                     ORDER BY signal_date DESC LIMIT 1),
-                    ROUND(r.entry_price::numeric, 2)
-                ) AS "Execution Price",
-                
-                -- If it's a SELL signal, the entry_price logged is likely the exit price. 
-                -- Otherwise, calculate from PNL if closed.
-                CASE 
-                    WHEN r.signal_type ~* 'SELL' THEN ROUND(r.entry_price::numeric, 2)
-                    WHEN r.verdict != 'PENDING' AND r.pnl_percentage IS NOT NULL THEN ROUND((r.entry_price * (1 + (r.pnl_percentage / 100)))::numeric, 2)
-                    ELSE NULL
-                END AS "Exit Price",
-                
-                TO_CHAR(r.signal_date, 'HH12:MI AM') AS "Execution Time",
-                r.verdict AS "Status",
-                COALESCE(ROUND(r.pnl_percentage::numeric, 2), 0.00) AS "PNL (%)"
-            FROM raw_ledger r
-            ORDER BY r.signal_date DESC;
+                    ROUND(pnl_percentage::numeric, 2), 
+                    ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2),
+                    0.00
+                ) AS "PNL (%)"
+            FROM today_activity;
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
