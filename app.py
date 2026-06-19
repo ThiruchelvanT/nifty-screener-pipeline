@@ -54,7 +54,6 @@ def load_ledger_scoreboard():
     except Exception as e:
         return pd.DataFrame()
 
-# 🛡️ THE FIX: Dynamically selects the correct pricing table based on timeframe
 @st.cache_data(ttl=60)
 def load_active_portfolio(timeframe):
     try:
@@ -93,7 +92,7 @@ def load_active_portfolio(timeframe):
                     ELSE g.target_timeframe 
                 END AS "Category",
                 g.total_signals AS "Signal Count",
-                TO_CHAR(g.first_entry_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY - HH12:MI AM') AS "Entry Time",
+                TO_CHAR(g.first_entry_date, 'Mon DD, YYYY - HH12:MI AM') AS "Entry Time",
                 ROUND(g.avg_entry_price::numeric, 2) AS "Avg Entry Price",
                 ROUND(s.close::numeric, 2) AS "Current Price",
                 ROUND( (((s.close - g.avg_entry_price) / g.avg_entry_price) * 100)::numeric, 2 ) AS "Unrealized PNL (%)"
@@ -107,7 +106,6 @@ def load_active_portfolio(timeframe):
     except Exception as e:
         return pd.DataFrame()
 
-# 🛡️ THE FIX: Dynamically selects correct table for Daily PNL calculation
 @st.cache_data(ttl=60)
 def load_daily_pnl(timeframe):
     try:
@@ -129,7 +127,7 @@ def load_daily_pnl(timeframe):
             FROM gold_signal_ledger g
             JOIN latest_prices s ON g.ticker = s.ticker
             WHERE g.target_timeframe = '{timeframe}' 
-              AND (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date
+              AND g.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
               AND g.verdict = 'PENDING';
         """
         df = pd.read_sql(query, temp_engine)
@@ -140,7 +138,6 @@ def load_daily_pnl(timeframe):
     except Exception:
         return 0.0
 
-# 🛡️ THE FIX: Removed the double-shift from TO_CHAR and signal_date checking
 @st.cache_data(ttl=60)
 def load_daily_executions(timeframe):
     try:
@@ -167,7 +164,6 @@ def load_daily_executions(timeframe):
     except Exception:
         return pd.DataFrame()
 
-
 @st.cache_data(ttl=300)
 def load_period_performance(timeframe, days):
     try:
@@ -193,7 +189,6 @@ def load_period_performance(timeframe, days):
         st.sidebar.error(f"Curve DB Error: {e}")
         return pd.DataFrame()
 
-# 🛡️ THE FIX: Removed timezone shifts from the Macro Lifecycle rendering
 @st.cache_data(ttl=60)
 def fetch_macro_trade_lifecycle(timeframe, days):
     try:
@@ -354,7 +349,6 @@ def load_silver_history(ticker, timeframe):
         st.error(f"Failed to breach the Dual Vaults: {e}")
         return pd.DataFrame()
 
-# 🛡️ THE FIX: Removed the double-shift from the ETF Sniper Radar
 @st.cache_data(ttl=60) 
 def load_etf_sniper_radar():
     try:
