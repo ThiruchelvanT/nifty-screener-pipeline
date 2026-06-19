@@ -914,7 +914,14 @@ with tab3:
 
     st.markdown("### 📋 Today's Order Book")
     if not df_intra_today.empty:
-        st.dataframe(df_intra_today, use_container_width=True, hide_index=True)
+        # 🛡️ THE FIX: Force the dataframe to display the columns in the exact, logical order you requested
+        column_order = ["Ticker", "Action", "Execution Price", "Exit Price", "Execution Time", "Exit Time", "Status", "PNL (%)"]
+        
+        st.dataframe(
+            df_intra_today[column_order], 
+            use_container_width=True, 
+            hide_index=True
+        )
     else:
         st.info("No intraday actions executed yet during today's session.")
 
