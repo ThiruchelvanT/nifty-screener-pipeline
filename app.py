@@ -8,6 +8,8 @@ from sqlalchemy import create_engine
 import os
 import yfinance as yf
 from fyers_apiv3 import fyersModel
+import datetime
+import pytz
 
 # ==========================================
 # 1. PAGE CONFIGURATION & STYLING
@@ -180,7 +182,6 @@ def load_period_performance(timeframe, days):
         st.sidebar.error(f"Curve DB Error: {e}")
         return pd.DataFrame()
 
-# 🛡️ UPDATED: Enterprise Trade Lifecycle Ledger (Fixed Signal Name Trap)
 @st.cache_data(ttl=60)
 def fetch_macro_trade_lifecycle(timeframe, days):
     try:
@@ -216,7 +217,7 @@ def fetch_macro_trade_lifecycle(timeframe, days):
             ) s ON true
             WHERE b.target_timeframe = '{timeframe}'
               AND b.signal_date >= NOW() - INTERVAL '{days} days'
-              AND b.signal_type !~* 'SELL' -- 🚨 THE FIX: Match anything that is NOT a sell
+              AND b.signal_type !~* 'SELL' 
             ORDER BY b.signal_date DESC;
         """
         df = pd.read_sql_query(query, conn)
@@ -288,6 +289,7 @@ def load_gold_data():
         st.error(f"Failed to breach the Gold Vault: {e}")
         return None, None
 
+# 🛡️ THE FIX: Timzone Stripper + Perfect Adjacency
 @st.cache_data(ttl=900)
 def load_silver_history(ticker, timeframe):
     try:
@@ -331,13 +333,11 @@ def load_silver_history(ticker, timeframe):
         
         if df.empty: return df
             
-        # 🚨 THE FIX: Simply format to standard datetime. No double-shifting.
         df['datetime'] = pd.to_datetime(df['datetime'])
-        if df['datetime'].dt.tz is None:
-            df['datetime'] = df['datetime'].dt.tz_localize('UTC')
-            
-        df['datetime'] = df['datetime'].dt.tz_convert('Asia/Kolkata')
-        df['datetime'] = df['datetime'].dt.tz_localize(None) 
+        
+        # 🛡️ STRIP NEONDB'S UTC OVERRIDE (Force it back to naive exact numbers)
+        if df['datetime'].dt.tz is not None:
+            df['datetime'] = df['datetime'].dt.tz_localize(None) 
         
         return df.sort_values(by="datetime", ascending=True)
     except Exception as e:
@@ -483,7 +483,7 @@ except Exception as e:
 # ==========================================
 data_result = load_gold_data()
 
-# 🔀 THE DYNAMIC FALLBACK ROUTER
+# 🔀 THE DYNAMIC FALLBACK ROUTER (With Token Auto-Revert)
 st.sidebar.divider()
 st.sidebar.subheader("🔀 Data Source Router")
 try:
@@ -495,6 +495,27 @@ try:
     cursor.execute("SELECT key_value FROM system_config WHERE key_name = 'ACTIVE_DATA_SOURCE';")
     res = cursor.fetchone()
     current_source = res[0] if res else "YAHOO"
+
+    # 🛡️ THE FIX: Auto-Revert UI to YAHOO if token is stale
+    cursor.execute("SELECT last_updated FROM system_config WHERE key_name = 'FYERS_ACCESS_TOKEN';")
+    token_res = cursor.fetchone()
+    
+    ist = pytz.timezone('Asia/Kolkata')
+    today_ist = datetime.datetime.now(ist).date()
+    
+    is_token_fresh = False
+    if token_res and token_res[0]:
+        last_up = token_res[0]
+        if last_up.tzinfo is None:
+            last_up = last_up.replace(tzinfo=pytz.utc)
+        if last_up.astimezone(ist).date() == today_ist:
+            is_token_fresh = True
+
+    if current_source == "FYERS" and not is_token_fresh:
+        current_source = "YAHOO"
+        cursor.execute("UPDATE system_config SET key_value = 'YAHOO', last_updated = NOW() WHERE key_name = 'ACTIVE_DATA_SOURCE';")
+        conn.commit()
+        st.sidebar.warning("⚠️ Fyers Token expired. UI Auto-Reverted to YAHOO.")
 
     new_source = st.sidebar.radio(
         "Active Pipeline Source:", 
@@ -706,6 +727,12 @@ with tab2:
             chart_df['rsi_2_over'] = chart_df['rsi_2'].clip(lower=75)
             chart_df['rsi_2_under'] = chart_df['rsi_2'].clip(upper=20)
 
+            # 🛡️ THE FIX: Format as string to force Category Axis (Ignores all gaps)
+            if target_timeframe == '1d':
+                chart_df['display_time'] = chart_df['datetime'].dt.strftime('%b %d, %Y')
+            else:
+                chart_df['display_time'] = chart_df['datetime'].dt.strftime('%b %d, %H:%M')
+
             fig = make_subplots(
                 rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.03,
                 row_heights=[0.25, 0.15, 0.15, 0.15, 0.15, 0.15],
@@ -718,40 +745,40 @@ with tab2:
 
             # ROW 1: PRICE
             fig.add_trace(go.Candlestick(
-                x=chart_df['datetime'], open=chart_df['open'], high=chart_df['high'],
+                x=chart_df['display_time'], open=chart_df['open'], high=chart_df['high'],
                 low=chart_df['low'], close=chart_df['close'], name='Price',
                 increasing_line_color='#26A69A', decreasing_line_color='#EF5350' 
             ), row=1, col=1)
             
             # ROW 2: MACD 
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_black'], name='MACD Line', line=dict(color='white', width=1.5)), row=2, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['macd_red'], name='Signal Line', line=dict(color='red', width=1.5)), row=2, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['display_time'], y=chart_df['macd_black'], name='MACD Line', line=dict(color='white', width=1.5)), row=2, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['display_time'], y=chart_df['macd_red'], name='Signal Line', line=dict(color='red', width=1.5)), row=2, col=1)
             
             # ROW 3: RSI (2)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=[75]*len(chart_df), mode='lines', line=dict(color='rgba(0,0,0,0)', width=0), hoverinfo='skip'), row=3, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2_over'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=[20]*len(chart_df), mode='lines', line=dict(color='rgba(0,0,0,0)', width=0), hoverinfo='skip'), row=3, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2_under'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_2'], name='RSI(2)', line=dict(color='#FFA500', width=1.5)), row=3, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['display_time'], y=[75]*len(chart_df), mode='lines', line=dict(color='rgba(0,0,0,0)', width=0), hoverinfo='skip'), row=3, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['display_time'], y=chart_df['rsi_2_over'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['display_time'], y=[20]*len(chart_df), mode='lines', line=dict(color='rgba(0,0,0,0)', width=0), hoverinfo='skip'), row=3, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['display_time'], y=chart_df['rsi_2_under'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255,255,255,0.3)', hoverinfo='skip'), row=3, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['display_time'], y=chart_df['rsi_2'], name='RSI(2)', line=dict(color='#FFA500', width=1.5)), row=3, col=1)
 
             # ROW 4: TRADINGVIEW PARITY STOCHASTIC RSI
             fig.add_hrect(y0=20, y1=80, fillcolor="rgba(255, 100, 100, 0.05)", layer="below", line_width=0, row=4, col=1)
             fig.add_hline(y=80, line_width=1, line_color="gray", line_dash="dash", row=4, col=1)
             fig.add_hline(y=20, line_width=1, line_color="gray", line_dash="dash", row=4, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['stochrsi_k'], name='%K Line (Blue)', line=dict(color='#0055FF', width=1.5)), row=4, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['stochrsi_d'], name='%D Line (Orange)', line=dict(color='#FF9900', width=1.2, dash='dot')), row=4, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['display_time'], y=chart_df['stochrsi_k'], name='%K Line (Blue)', line=dict(color='#0055FF', width=1.5)), row=4, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['display_time'], y=chart_df['stochrsi_d'], name='%D Line (Orange)', line=dict(color='#FF9900', width=1.2, dash='dot')), row=4, col=1)
 
             # ROW 5: RSI (14)
             fig.add_hline(y=70, line_dash="dot", line_color="red", row=5, col=1)
             fig.add_hline(y=30, line_dash="dot", line_color="green", row=5, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['rsi_14'], name='RSI(14)', line=dict(color='#E0E0E0', width=1.5)), row=5, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['display_time'], y=chart_df['rsi_14'], name='RSI(14)', line=dict(color='#E0E0E0', width=1.5)), row=5, col=1)
 
             # ROW 6: NVI
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['nvi_black'], name='NVI Raw', line=dict(color='white', width=1.5)), row=6, col=1)
-            fig.add_trace(go.Scatter(x=chart_df['datetime'], y=chart_df['nvi_red'], name='NVI EMA(255)', line=dict(color='#FF3333', width=1.5)), row=6, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['display_time'], y=chart_df['nvi_black'], name='NVI Raw', line=dict(color='white', width=1.5)), row=6, col=1)
+            fig.add_trace(go.Scatter(x=chart_df['display_time'], y=chart_df['nvi_red'], name='NVI EMA(255)', line=dict(color='#FF3333', width=1.5)), row=6, col=1)
 
             # VALUE BUBBLES
-            last_date = chart_df['datetime'].iloc[-1]
+            last_date = chart_df['display_time'].iloc[-1]
             last_k = chart_df['stochrsi_k'].iloc[-1]
             last_d = chart_df['stochrsi_d'].iloc[-1]
             
@@ -767,16 +794,19 @@ with tab2:
             if pd.notna(last_nvi_red):
                 fig.add_annotation(x=last_date, y=last_nvi_red, text=f"<b>{last_nvi_red:.2f}</b>", showarrow=False, xanchor='left', xshift=10, bgcolor="#FF3333", font=dict(color="white", size=11), borderpad=3, row=6, col=1)
 
+            # 🛡️ THE FIX: Removed rangebreaks. Forces Category Axis rendering.
             fig.update_layout(
                 height=1200, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                showlegend=False, margin=dict(l=0, r=90, t=30, b=0), dragmode='pan', xaxis_rangeslider_visible=False, xaxis=dict(type="date")
+                showlegend=False, margin=dict(l=0, r=90, t=30, b=0), dragmode='pan', xaxis_rangeslider_visible=False
+            )
+            fig.update_xaxes(
+                type='category', 
+                nticks=12, 
+                tickangle=-45, 
+                categoryorder='array', 
+                categoryarray=chart_df['display_time']
             )
             fig.update_yaxes(fixedrange=True)
-            
-            if target_timeframe == '1d':
-                fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
-            else:
-                fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"]), dict(bounds=[15.5, 9.25], pattern="hour")])
 
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom':False, 'displayModeBar': False})
         else:
@@ -848,7 +878,6 @@ with tab3:
     st.divider()
 
     st.markdown("### 📈 Weekly Performance Curve (Last 7 Days)")
-    # Replaced load_weekly_performance with dynamic period loader specific to Intraday's 7-day view
     df_intra_weekly = load_period_performance('15m', 7)
     if not df_intra_weekly.empty:
         df_intra_weekly["Cumulative Growth (%)"] = df_intra_weekly["Daily PNL (%)"].cumsum()
@@ -881,10 +910,8 @@ with tab4:
         
     st.divider()
     
-    # 🛠️ THE NEW DYNAMIC HISTORICAL MACRO RADAR
     st.subheader("📅 Historical Macro Performance")
     
-    # The Toggle Switch
     macro_period = st.radio("Select Lookback Period:", ["Last 7 Days", "Last 30 Days"], horizontal=True)
     days_lookback = 7 if "7" in macro_period else 30
     
@@ -898,7 +925,6 @@ with tab4:
     st.markdown(f"### 📋 Trade Ledger ({macro_period})")
     
     if not df_macro_history.empty:
-        # 🚨 THE FIX: Rendering the raw dataframe without Pandas Styler to prevent column dropping
         st.dataframe(
             df_macro_history, 
             use_container_width=True, 
