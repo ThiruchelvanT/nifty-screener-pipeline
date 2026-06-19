@@ -143,7 +143,7 @@ def load_daily_pnl(timeframe):
     except Exception:
         return 0.0
 
-# 🛡️ THE FIX: Enterprise Lateral Join catching Entries OR Exits for today
+# 🛡️ UPDATED: Omni-Directional Daily Executions (Catches Overnight Carries & Stitches PNL)
 @st.cache_data(ttl=60)
 def load_daily_executions(timeframe):
     try:
@@ -152,37 +152,48 @@ def load_daily_executions(timeframe):
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
         query = f"""
+            WITH today_activity AS (
+                SELECT DISTINCT ON (g.ticker)
+                    g.ticker AS "Ticker",
+                    COALESCE(
+                        (SELECT signal_type FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1),
+                        g.signal_type
+                    ) AS "Action",
+                    COALESCE(
+                        CASE WHEN g.signal_type !~* 'SELL' THEN ROUND(g.entry_price::numeric, 2) ELSE NULL END,
+                        (SELECT ROUND(entry_price::numeric, 2) FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1)
+                    ) AS "Execution Price",
+                    COALESCE(
+                        CASE WHEN g.signal_type ~* 'SELL' THEN ROUND(g.entry_price::numeric, 2) ELSE NULL END,
+                        (SELECT ROUND(entry_price::numeric, 2) FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1)
+                    ) AS "Exit Price",
+                    TO_CHAR(
+                        COALESCE(
+                            CASE WHEN g.signal_type !~* 'SELL' THEN g.signal_date ELSE NULL END,
+                            (SELECT signal_date FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1),
+                            g.signal_date
+                        ), 'HH12:MI AM'
+                    ) AS "Execution Time",
+                    g.verdict AS "Status",
+                    g.pnl_percentage
+                FROM gold_signal_ledger g
+                WHERE g.target_timeframe = '{timeframe}'
+                  AND g.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+                ORDER BY g.ticker, g.signal_date DESC
+            )
             SELECT 
-                b.ticker AS "Ticker",
-                b.signal_type AS "Action",
-                ROUND(b.entry_price::numeric, 2) AS "Execution Price",
+                "Ticker",
+                "Action",
+                "Execution Price",
+                "Exit Price",
+                "Execution Time",
+                "Status",
                 COALESCE(
-                    ROUND(s.entry_price::numeric, 2), 
-                    CASE WHEN b.verdict != 'PENDING' THEN ROUND((b.entry_price * (1 + (b.pnl_percentage / 100)))::numeric, 2) ELSE NULL END
-                ) AS "Exit Price",
-                TO_CHAR(b.signal_date, 'HH12:MI AM') AS "Execution Time",
-                COALESCE(TO_CHAR(s.signal_date, 'HH12:MI AM'), 'Active') AS "Exit Time",
-                b.verdict AS "Status",
-                COALESCE(ROUND(b.pnl_percentage::numeric, 2), 0.00) AS "PNL (%)"
-            FROM gold_signal_ledger b
-            LEFT JOIN LATERAL (
-                SELECT signal_date, entry_price 
-                FROM gold_signal_ledger 
-                WHERE ticker = b.ticker 
-                  AND target_timeframe = b.target_timeframe 
-                  AND signal_type ~* 'SELL' 
-                  AND signal_date >= b.signal_date 
-                ORDER BY signal_date ASC 
-                LIMIT 1
-            ) s ON true
-            WHERE b.target_timeframe = '{timeframe}'
-              AND b.signal_type !~* 'SELL'
-              AND (
-                  b.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-                  OR s.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-                  OR (b.verdict != 'PENDING' AND b.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date)
-              )
-            ORDER BY COALESCE(s.signal_date, b.signal_date) DESC;
+                    ROUND(pnl_percentage::numeric, 2), 
+                    ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2),
+                    0.00
+                ) AS "PNL (%)"
+            FROM today_activity;
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
