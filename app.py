@@ -138,30 +138,49 @@ def load_daily_pnl(timeframe):
     except Exception:
         return 0.0
 
+# 🛡️ UPDATED: Daily Executions with Stitched Exit Prices & PNL
 @st.cache_data(ttl=60)
 def load_daily_executions(timeframe):
     try:
-        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        conn = psycopg2.connect(
+            host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
+            user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
+        )
+        # Using LATERAL JOIN to hunt down today's specific exits
         query = f"""
-            SELECT DISTINCT ON (ticker)
-                ticker AS "Ticker",
-                signal_type AS "Action",
-                entry_price AS "Execution Price",
-                TO_CHAR(signal_date, 'HH12:MI AM') AS "Execution Time",
-                verdict AS "Status"
-            FROM gold_signal_ledger
-            WHERE target_timeframe = '{timeframe}'
-              AND signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-            ORDER BY ticker, signal_date DESC;
+            SELECT 
+                b.ticker AS "Ticker",
+                b.signal_type AS "Action",
+                ROUND(b.entry_price::numeric, 2) AS "Execution Price",
+                COALESCE(
+                    ROUND(s.entry_price::numeric, 2), 
+                    CASE WHEN b.verdict != 'PENDING' THEN ROUND((b.entry_price * (1 + (b.pnl_percentage / 100)))::numeric, 2) ELSE NULL END
+                ) AS "Exit Price",
+                TO_CHAR(b.signal_date, 'HH12:MI AM') AS "Execution Time",
+                b.verdict AS "Status",
+                COALESCE(ROUND(b.pnl_percentage::numeric, 2), 0.00) AS "PNL (%)"
+            FROM gold_signal_ledger b
+            LEFT JOIN LATERAL (
+                SELECT signal_date, entry_price 
+                FROM gold_signal_ledger 
+                WHERE ticker = b.ticker 
+                  AND target_timeframe = b.target_timeframe 
+                  AND signal_type ~* 'SELL' 
+                  AND signal_date > b.signal_date 
+                ORDER BY signal_date ASC 
+                LIMIT 1
+            ) s ON true
+            WHERE b.target_timeframe = '{timeframe}'
+              AND b.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+              AND b.signal_type !~* 'SELL'
+            ORDER BY b.signal_date DESC;
         """
-        df = pd.read_sql(query, temp_engine)
-        temp_engine.dispose()
+        df = pd.read_sql_query(query, conn)
+        conn.close()
         
-        if not df.empty:
-            df = df.sort_values(by="Execution Time", ascending=False)
-            
         return df
-    except Exception:
+    except Exception as e:
+        st.sidebar.error(f"Daily Executions DB Error: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=300)
