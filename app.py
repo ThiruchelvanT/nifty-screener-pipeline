@@ -331,12 +331,8 @@ def load_silver_history(ticker, timeframe):
         
         if df.empty: return df
             
+        # 🚨 THE FIX: Simply format to standard datetime. No double-shifting.
         df['datetime'] = pd.to_datetime(df['datetime'])
-        if df['datetime'].dt.tz is None:
-            df['datetime'] = df['datetime'].dt.tz_localize('UTC')
-            
-        df['datetime'] = df['datetime'].dt.tz_convert('Asia/Kolkata')
-        df['datetime'] = df['datetime'].dt.tz_localize(None) 
         
         return df.sort_values(by="datetime", ascending=True)
     except Exception as e:
