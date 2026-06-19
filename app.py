@@ -8,6 +8,8 @@ from sqlalchemy import create_engine
 import os
 import yfinance as yf
 from fyers_apiv3 import fyersModel
+import datetime
+import pytz
 
 # ==========================================
 # 1. PAGE CONFIGURATION & STYLING
@@ -180,7 +182,6 @@ def load_period_performance(timeframe, days):
         st.sidebar.error(f"Curve DB Error: {e}")
         return pd.DataFrame()
 
-# 🛡️ UPDATED: Enterprise Trade Lifecycle Ledger (Fixed Signal Name Trap)
 @st.cache_data(ttl=60)
 def fetch_macro_trade_lifecycle(timeframe, days):
     try:
@@ -216,7 +217,7 @@ def fetch_macro_trade_lifecycle(timeframe, days):
             ) s ON true
             WHERE b.target_timeframe = '{timeframe}'
               AND b.signal_date >= NOW() - INTERVAL '{days} days'
-              AND b.signal_type !~* 'SELL' -- 🚨 THE FIX: Match anything that is NOT a sell
+              AND b.signal_type !~* 'SELL' 
             ORDER BY b.signal_date DESC;
         """
         df = pd.read_sql_query(query, conn)
@@ -288,6 +289,7 @@ def load_gold_data():
         st.error(f"Failed to breach the Gold Vault: {e}")
         return None, None
 
+# 🛡️ THE FIX: Removed double-timezone shifting. The database is already IST.
 @st.cache_data(ttl=900)
 def load_silver_history(ticker, timeframe):
     try:
@@ -331,13 +333,8 @@ def load_silver_history(ticker, timeframe):
         
         if df.empty: return df
             
-        # 🚨 THE FIX: Simply format to standard datetime. No double-shifting.
+        # Leave it naive because it's already exactly IST from ingestion
         df['datetime'] = pd.to_datetime(df['datetime'])
-        if df['datetime'].dt.tz is None:
-            df['datetime'] = df['datetime'].dt.tz_localize('UTC')
-            
-        df['datetime'] = df['datetime'].dt.tz_convert('Asia/Kolkata')
-        df['datetime'] = df['datetime'].dt.tz_localize(None) 
         
         return df.sort_values(by="datetime", ascending=True)
     except Exception as e:
@@ -483,7 +480,7 @@ except Exception as e:
 # ==========================================
 data_result = load_gold_data()
 
-# 🔀 THE DYNAMIC FALLBACK ROUTER
+# 🔀 THE DYNAMIC FALLBACK ROUTER (With Token Auto-Revert)
 st.sidebar.divider()
 st.sidebar.subheader("🔀 Data Source Router")
 try:
@@ -495,6 +492,27 @@ try:
     cursor.execute("SELECT key_value FROM system_config WHERE key_name = 'ACTIVE_DATA_SOURCE';")
     res = cursor.fetchone()
     current_source = res[0] if res else "YAHOO"
+
+    # 🛡️ THE FIX: Auto-Revert UI to YAHOO if token is stale
+    cursor.execute("SELECT last_updated FROM system_config WHERE key_name = 'FYERS_ACCESS_TOKEN';")
+    token_res = cursor.fetchone()
+    
+    ist = pytz.timezone('Asia/Kolkata')
+    today_ist = datetime.datetime.now(ist).date()
+    
+    is_token_fresh = False
+    if token_res and token_res[0]:
+        last_up = token_res[0]
+        if last_up.tzinfo is None:
+            last_up = last_up.replace(tzinfo=pytz.utc)
+        if last_up.astimezone(ist).date() == today_ist:
+            is_token_fresh = True
+
+    if current_source == "FYERS" and not is_token_fresh:
+        current_source = "YAHOO"
+        cursor.execute("UPDATE system_config SET key_value = 'YAHOO', last_updated = NOW() WHERE key_name = 'ACTIVE_DATA_SOURCE';")
+        conn.commit()
+        st.sidebar.warning("⚠️ Fyers Token expired. UI Auto-Reverted to YAHOO.")
 
     new_source = st.sidebar.radio(
         "Active Pipeline Source:", 
@@ -848,7 +866,6 @@ with tab3:
     st.divider()
 
     st.markdown("### 📈 Weekly Performance Curve (Last 7 Days)")
-    # Replaced load_weekly_performance with dynamic period loader specific to Intraday's 7-day view
     df_intra_weekly = load_period_performance('15m', 7)
     if not df_intra_weekly.empty:
         df_intra_weekly["Cumulative Growth (%)"] = df_intra_weekly["Daily PNL (%)"].cumsum()
@@ -881,10 +898,8 @@ with tab4:
         
     st.divider()
     
-    # 🛠️ THE NEW DYNAMIC HISTORICAL MACRO RADAR
     st.subheader("📅 Historical Macro Performance")
     
-    # The Toggle Switch
     macro_period = st.radio("Select Lookback Period:", ["Last 7 Days", "Last 30 Days"], horizontal=True)
     days_lookback = 7 if "7" in macro_period else 30
     
@@ -898,7 +913,6 @@ with tab4:
     st.markdown(f"### 📋 Trade Ledger ({macro_period})")
     
     if not df_macro_history.empty:
-        # 🚨 THE FIX: Rendering the raw dataframe without Pandas Styler to prevent column dropping
         st.dataframe(
             df_macro_history, 
             use_container_width=True, 
