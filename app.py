@@ -54,7 +54,7 @@ def load_ledger_scoreboard():
     except Exception as e:
         return pd.DataFrame()
 
-# 🛡️ THE FIX: Removed the double-shift from the Entry Time TO_CHAR formatting
+# 🛡️ THE FIX: Dynamically selects the correct pricing table based on timeframe
 @st.cache_data(ttl=60)
 def load_active_portfolio(timeframe):
     try:
@@ -63,12 +63,15 @@ def load_active_portfolio(timeframe):
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
         
+        # Point to the correct database table for the live price
+        price_table = "silver_1d_macro" if timeframe == '1d' else "silver_technical_indicators"
+        
         query = f"""
-            WITH latest_macro AS (
+            WITH latest_prices AS (
                 SELECT ticker, close 
                 FROM (
                     SELECT ticker, close, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn 
-                    FROM silver_1d_macro
+                    FROM {price_table}
                 ) sub WHERE rn = 1
             ),
             aggregated_ledger AS (
@@ -90,12 +93,12 @@ def load_active_portfolio(timeframe):
                     ELSE g.target_timeframe 
                 END AS "Category",
                 g.total_signals AS "Signal Count",
-                TO_CHAR(g.first_entry_date, 'Mon DD, YYYY - HH12:MI AM') AS "Entry Time",
+                TO_CHAR(g.first_entry_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY - HH12:MI AM') AS "Entry Time",
                 ROUND(g.avg_entry_price::numeric, 2) AS "Avg Entry Price",
                 ROUND(s.close::numeric, 2) AS "Current Price",
                 ROUND( (((s.close - g.avg_entry_price) / g.avg_entry_price) * 100)::numeric, 2 ) AS "Unrealized PNL (%)"
             FROM aggregated_ledger g
-            JOIN latest_macro s ON g.ticker = s.ticker
+            JOIN latest_prices s ON g.ticker = s.ticker
             ORDER BY ((s.close - g.avg_entry_price) / g.avg_entry_price) DESC;
         """
         df = pd.read_sql_query(query, conn)
@@ -103,6 +106,39 @@ def load_active_portfolio(timeframe):
         return df
     except Exception as e:
         return pd.DataFrame()
+
+# 🛡️ THE FIX: Dynamically selects correct table for Daily PNL calculation
+@st.cache_data(ttl=60)
+def load_daily_pnl(timeframe):
+    try:
+        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        
+        # Point to the correct database table for the live price
+        price_table = "silver_1d_macro" if timeframe == '1d' else "silver_technical_indicators"
+        
+        query = f"""
+            WITH latest_prices AS (
+                SELECT ticker, close 
+                FROM (
+                    SELECT ticker, close, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn 
+                    FROM {price_table}
+                ) sub WHERE rn = 1
+            )
+            SELECT 
+                COALESCE(ROUND(AVG(((s.close - g.entry_price) / g.entry_price) * 100)::numeric, 2), 0.00) as pnl_ratio
+            FROM gold_signal_ledger g
+            JOIN latest_prices s ON g.ticker = s.ticker
+            WHERE g.target_timeframe = '{timeframe}' 
+              AND (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date
+              AND g.verdict = 'PENDING';
+        """
+        df = pd.read_sql(query, temp_engine)
+        temp_engine.dispose()
+        if not df.empty and pd.notna(df.iloc[0]['pnl_ratio']):
+            return float(df.iloc[0]['pnl_ratio'])
+        return 0.0
+    except Exception:
+        return 0.0
 
 # 🛡️ THE FIX: Removed the double-shift from TO_CHAR and signal_date checking
 @st.cache_data(ttl=60)
@@ -131,33 +167,6 @@ def load_daily_executions(timeframe):
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=60)
-def load_daily_pnl(timeframe):
-    try:
-        temp_engine = create_engine(st.secrets["DATABASE_URL"])
-        query = f"""
-            WITH latest_prices AS (
-                SELECT ticker, close 
-                FROM (
-                    SELECT ticker, close, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn 
-                    FROM silver_1d_macro
-                ) sub WHERE rn = 1
-            )
-            SELECT 
-                COALESCE(ROUND(AVG(((s.close - g.entry_price) / g.entry_price) * 100)::numeric, 2), 0.00) as pnl_ratio
-            FROM gold_signal_ledger g
-            JOIN latest_prices s ON g.ticker = s.ticker
-            WHERE g.target_timeframe = '{timeframe}' 
-              AND g.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-              AND g.verdict = 'PENDING';
-        """
-        df = pd.read_sql(query, temp_engine)
-        temp_engine.dispose()
-        if not df.empty and pd.notna(df.iloc[0]['pnl_ratio']):
-            return float(df.iloc[0]['pnl_ratio'])
-        return 0.0
-    except Exception:
-        return 0.0
 
 @st.cache_data(ttl=300)
 def load_period_performance(timeframe, days):
