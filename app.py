@@ -54,6 +54,7 @@ def load_ledger_scoreboard():
     except Exception as e:
         return pd.DataFrame()
 
+# 🛡️ THE FIX: Removed the double-shift from the Entry Time TO_CHAR formatting
 @st.cache_data(ttl=60)
 def load_active_portfolio(timeframe):
     try:
@@ -89,7 +90,7 @@ def load_active_portfolio(timeframe):
                     ELSE g.target_timeframe 
                 END AS "Category",
                 g.total_signals AS "Signal Count",
-                TO_CHAR(g.first_entry_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY - HH12:MI AM') AS "Entry Time",
+                TO_CHAR(g.first_entry_date, 'Mon DD, YYYY - HH12:MI AM') AS "Entry Time",
                 ROUND(g.avg_entry_price::numeric, 2) AS "Avg Entry Price",
                 ROUND(s.close::numeric, 2) AS "Current Price",
                 ROUND( (((s.close - g.avg_entry_price) / g.avg_entry_price) * 100)::numeric, 2 ) AS "Unrealized PNL (%)"
@@ -103,6 +104,7 @@ def load_active_portfolio(timeframe):
     except Exception as e:
         return pd.DataFrame()
 
+# 🛡️ THE FIX: Removed the double-shift from TO_CHAR and signal_date checking
 @st.cache_data(ttl=60)
 def load_daily_executions(timeframe):
     try:
@@ -112,11 +114,11 @@ def load_daily_executions(timeframe):
                 ticker AS "Ticker",
                 signal_type AS "Action",
                 entry_price AS "Execution Price",
-                TO_CHAR(signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'HH12:MI AM') AS "Execution Time",
+                TO_CHAR(signal_date, 'HH12:MI AM') AS "Execution Time",
                 verdict AS "Status"
             FROM gold_signal_ledger
             WHERE target_timeframe = '{timeframe}'
-              AND (signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date
+              AND signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
             ORDER BY ticker, signal_date DESC;
         """
         df = pd.read_sql(query, temp_engine)
@@ -146,7 +148,7 @@ def load_daily_pnl(timeframe):
             FROM gold_signal_ledger g
             JOIN latest_prices s ON g.ticker = s.ticker
             WHERE g.target_timeframe = '{timeframe}' 
-              AND (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date
+              AND g.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
               AND g.verdict = 'PENDING';
         """
         df = pd.read_sql(query, temp_engine)
@@ -166,7 +168,7 @@ def load_period_performance(timeframe, days):
         )
         query = f"""
             SELECT 
-                (signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date as "Date",
+                signal_date::date as "Date",
                 SUM(COALESCE(pnl_percentage, 0)) as "Daily PNL (%)"
             FROM gold_signal_ledger
             WHERE target_timeframe = '{timeframe}'
@@ -182,6 +184,7 @@ def load_period_performance(timeframe, days):
         st.sidebar.error(f"Curve DB Error: {e}")
         return pd.DataFrame()
 
+# 🛡️ THE FIX: Removed timezone shifts from the Macro Lifecycle rendering
 @st.cache_data(ttl=60)
 def fetch_macro_trade_lifecycle(timeframe, days):
     try:
@@ -192,10 +195,10 @@ def fetch_macro_trade_lifecycle(timeframe, days):
         query = f"""
             SELECT 
                 b.ticker AS "Ticker",
-                TO_CHAR(b.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD - HH12:MI AM') AS "Buy Time",
+                TO_CHAR(b.signal_date, 'Mon DD - HH12:MI AM') AS "Buy Time",
                 ROUND(b.entry_price::numeric, 2) AS "Buy Price",
                 COALESCE(
-                    TO_CHAR(s.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD - HH12:MI AM'), 
+                    TO_CHAR(s.signal_date, 'Mon DD - HH12:MI AM'), 
                     CASE WHEN b.verdict != 'PENDING' THEN 'Closed' ELSE 'Active' END
                 ) AS "Sold Time",
                 COALESCE(
@@ -289,7 +292,6 @@ def load_gold_data():
         st.error(f"Failed to breach the Gold Vault: {e}")
         return None, None
 
-# 🛡️ THE FIX: Timzone Stripper + Perfect Adjacency
 @st.cache_data(ttl=900)
 def load_silver_history(ticker, timeframe):
     try:
@@ -335,7 +337,6 @@ def load_silver_history(ticker, timeframe):
             
         df['datetime'] = pd.to_datetime(df['datetime'])
         
-        # 🛡️ STRIP NEONDB'S UTC OVERRIDE (Force it back to naive exact numbers)
         if df['datetime'].dt.tz is not None:
             df['datetime'] = df['datetime'].dt.tz_localize(None) 
         
@@ -344,6 +345,7 @@ def load_silver_history(ticker, timeframe):
         st.error(f"Failed to breach the Dual Vaults: {e}")
         return pd.DataFrame()
 
+# 🛡️ THE FIX: Removed the double-shift from the ETF Sniper Radar
 @st.cache_data(ttl=60) 
 def load_etf_sniper_radar():
     try:
@@ -351,7 +353,7 @@ def load_etf_sniper_radar():
         query = """
             SELECT DISTINCT ON (ticker)
                 ticker AS "ETF Ticker", 
-                TO_CHAR(signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'Mon DD, YYYY - HH12:MI AM') AS "Time Locked",
+                TO_CHAR(signal_date, 'Mon DD, YYYY - HH12:MI AM') AS "Time Locked",
                 signal_date,
                 signal_type AS "Signal Type", 
                 entry_price AS "Entry Price", 
@@ -483,7 +485,6 @@ except Exception as e:
 # ==========================================
 data_result = load_gold_data()
 
-# 🔀 THE DYNAMIC FALLBACK ROUTER (With Token Auto-Revert)
 st.sidebar.divider()
 st.sidebar.subheader("🔀 Data Source Router")
 try:
@@ -496,7 +497,6 @@ try:
     res = cursor.fetchone()
     current_source = res[0] if res else "YAHOO"
 
-    # 🛡️ THE FIX: Auto-Revert UI to YAHOO if token is stale
     cursor.execute("SELECT last_updated FROM system_config WHERE key_name = 'FYERS_ACCESS_TOKEN';")
     token_res = cursor.fetchone()
     
@@ -612,12 +612,10 @@ if nifty_proxy is not None:
 
 st.sidebar.divider()
 
-# 🌐 ADDED THE GLOBAL MACRO RADAR HERE IN THE SIDEBAR
 st.sidebar.subheader("🌐 Global Macro Radar")
 macro_data = load_global_macro_pulse()
 if macro_data:
     for asset, data in macro_data.items():
-        # Inverse colors for USD/INR and Crude Oil (Since high oil/dollar is BAD for Indian markets)
         if asset in ["USD / INR", "Crude Oil"]:
             st.sidebar.metric(label=asset, value=f"{data['value']:,.2f}", delta=f"{data['delta']:.2f}%", delta_color="inverse")
         else:
@@ -727,7 +725,6 @@ with tab2:
             chart_df['rsi_2_over'] = chart_df['rsi_2'].clip(lower=75)
             chart_df['rsi_2_under'] = chart_df['rsi_2'].clip(upper=20)
 
-            # 🛡️ THE FIX: Format as string to force Category Axis (Ignores all gaps)
             if target_timeframe == '1d':
                 chart_df['display_time'] = chart_df['datetime'].dt.strftime('%b %d, %Y')
             else:
@@ -794,7 +791,6 @@ with tab2:
             if pd.notna(last_nvi_red):
                 fig.add_annotation(x=last_date, y=last_nvi_red, text=f"<b>{last_nvi_red:.2f}</b>", showarrow=False, xanchor='left', xshift=10, bgcolor="#FF3333", font=dict(color="white", size=11), borderpad=3, row=6, col=1)
 
-            # 🛡️ THE FIX: Removed rangebreaks. Forces Category Axis rendering.
             fig.update_layout(
                 height=1200, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                 showlegend=False, margin=dict(l=0, r=90, t=30, b=0), dragmode='pan', xaxis_rangeslider_visible=False
