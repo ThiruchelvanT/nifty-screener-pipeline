@@ -205,33 +205,17 @@ else:
             time.sleep(0.5)
 
 # ==========================================
-# 5. SELF-HEALING DELTA LOAD ARCHITECTURE
+# 5. THE BACKFILL OVERRIDE ARCHITECTURE
 # ==========================================
 if not master_df.empty:
-    print(f"📊 Downloaded {len(master_df)} raw rows. Initiating Database Memory Check...")
+    print(f"📊 Downloaded {len(master_df)} raw rows. Bypassing Delta Check for Historical Backfill...")
     
-    try:
-        memory_query = """
-            SELECT DISTINCT ON (ticker, timeframe) 
-                ticker, timeframe, datetime AS db_max_date, close AS db_close 
-            FROM bronze_raw_ohlcv 
-            ORDER BY ticker, timeframe, datetime DESC;
-        """
-        db_memory = pd.read_sql(memory_query, engine)
-        
-        if not db_memory.empty:
-            master_df['datetime'] = pd.to_datetime(master_df['datetime'])
-            db_memory['db_max_date'] = pd.to_datetime(db_memory['db_max_date'])
-            
-            master_df = master_df.merge(db_memory[['ticker', 'timeframe', 'db_max_date']], on=['ticker', 'timeframe'], how='left')
-            master_df = master_df[(master_df['datetime'] > master_df['db_max_date']) | (master_df['db_max_date'].isnull())]
-            master_df = master_df.drop(columns=['db_max_date'])
-            
-    except Exception as e:
-        print(f"⚠️ Memory check bypassed. Error: {e}")
-
+    # 🚨 DELTA CHECK TEMPORARILY DISABLED. 
+    # We are sending all 30 days directly to the vault. 
+    # PostgreSQL's ON CONFLICT DO NOTHING will ignore the duplicates and save the missing history!
+    
     if not master_df.empty:
-        print(f"💾 Pushing {len(master_df)} NEW Delta rows into the Bronze Vault...")
+        print(f"💾 Pushing {len(master_df)} historical rows into the Bronze Vault...")
         master_df.to_sql(
             "bronze_raw_ohlcv", 
             engine, 
@@ -240,8 +224,6 @@ if not master_df.empty:
             method=postgres_upsert,
             chunksize=2000
         )
-        print("✅ Bronze Ingestion Complete!")
-    else:
-        print("✅ Vault is perfectly up to date. No new rows needed.")
+        print("✅ Historical Backfill Complete!")
 else:
     print("⚠️ FATAL: No data was fetched across any timeframes.")
