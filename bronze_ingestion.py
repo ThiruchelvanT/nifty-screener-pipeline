@@ -151,7 +151,7 @@ if USE_FYERS:
                 master_df = pd.concat([master_df, df], ignore_index=True)
             time.sleep(0.1)
     else:
-        start_date = (datetime.datetime.now() - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
+        start_date = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
         for symbol in fyers_tickers:
             df = fetch_fyers_history(symbol, "15", start_date, today_str)
             if not df.empty:
