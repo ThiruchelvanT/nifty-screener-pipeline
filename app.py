@@ -4,7 +4,6 @@ import psycopg2
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
-from sqlalchemy import create_engine
 import os
 import yfinance as yf
 from fyers_apiv3 import fyersModel
@@ -24,14 +23,17 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. DATA LOADERS
+# 2. DATA LOADERS (100% Native Psycopg2)
 # ==========================================
 @st.cache_data(ttl=900)
 def load_market_breadth():
     try:
-        temp_engine = create_engine(st.secrets["DATABASE_URL"])
-        df = pd.read_sql("SELECT * FROM gold_market_breadth", temp_engine)
-        temp_engine.dispose()
+        conn = psycopg2.connect(
+            host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
+            user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
+        )
+        df = pd.read_sql_query("SELECT * FROM gold_market_breadth", conn)
+        conn.close()
         return df
     except Exception as e:
         return pd.DataFrame()
@@ -39,7 +41,10 @@ def load_market_breadth():
 @st.cache_data(ttl=900)
 def load_ledger_scoreboard():
     try:
-        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        conn = psycopg2.connect(
+            host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
+            user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
+        )
         query = """
             SELECT 
                 COUNT(*) as total_signals,
@@ -48,8 +53,8 @@ def load_ledger_scoreboard():
             FROM gold_signal_ledger
             WHERE verdict != 'PENDING';
         """
-        df = pd.read_sql(query, temp_engine)
-        temp_engine.dispose()
+        df = pd.read_sql_query(query, conn)
+        conn.close()
         return df
     except Exception as e:
         return pd.DataFrame()
@@ -62,7 +67,6 @@ def load_active_portfolio(timeframe):
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
         
-        # Point to the correct database table for the live price
         price_table = "silver_1d_macro" if timeframe == '1d' else "silver_technical_indicators"
         
         query = f"""
@@ -109,9 +113,10 @@ def load_active_portfolio(timeframe):
 @st.cache_data(ttl=60)
 def load_daily_pnl(timeframe):
     try:
-        temp_engine = create_engine(st.secrets["DATABASE_URL"])
-        
-        # Point to the correct database table for the live price
+        conn = psycopg2.connect(
+            host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
+            user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
+        )
         price_table = "silver_1d_macro" if timeframe == '1d' else "silver_technical_indicators"
         
         query = f"""
@@ -130,15 +135,15 @@ def load_daily_pnl(timeframe):
               AND g.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
               AND g.verdict = 'PENDING';
         """
-        df = pd.read_sql(query, temp_engine)
-        temp_engine.dispose()
+        df = pd.read_sql_query(query, conn)
+        conn.close()
         if not df.empty and pd.notna(df.iloc[0]['pnl_ratio']):
             return float(df.iloc[0]['pnl_ratio'])
         return 0.0
     except Exception:
         return 0.0
 
-# 🛡️ UPDATED: Daily Executions with Stitched Exit Prices & PNL
+# 🛡️ THE FIX: Enterprise Lateral Join catching Entries OR Exits for today
 @st.cache_data(ttl=60)
 def load_daily_executions(timeframe):
     try:
@@ -146,7 +151,6 @@ def load_daily_executions(timeframe):
             host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
             user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
         )
-        # Using LATERAL JOIN to hunt down today's specific exits
         query = f"""
             SELECT 
                 b.ticker AS "Ticker",
@@ -157,6 +161,7 @@ def load_daily_executions(timeframe):
                     CASE WHEN b.verdict != 'PENDING' THEN ROUND((b.entry_price * (1 + (b.pnl_percentage / 100)))::numeric, 2) ELSE NULL END
                 ) AS "Exit Price",
                 TO_CHAR(b.signal_date, 'HH12:MI AM') AS "Execution Time",
+                COALESCE(TO_CHAR(s.signal_date, 'HH12:MI AM'), 'Active') AS "Exit Time",
                 b.verdict AS "Status",
                 COALESCE(ROUND(b.pnl_percentage::numeric, 2), 0.00) AS "PNL (%)"
             FROM gold_signal_ledger b
@@ -166,21 +171,24 @@ def load_daily_executions(timeframe):
                 WHERE ticker = b.ticker 
                   AND target_timeframe = b.target_timeframe 
                   AND signal_type ~* 'SELL' 
-                  AND signal_date > b.signal_date 
+                  AND signal_date >= b.signal_date 
                 ORDER BY signal_date ASC 
                 LIMIT 1
             ) s ON true
             WHERE b.target_timeframe = '{timeframe}'
-              AND b.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
               AND b.signal_type !~* 'SELL'
-            ORDER BY b.signal_date DESC;
+              AND (
+                  b.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+                  OR s.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+                  OR (b.verdict != 'PENDING' AND b.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date)
+              )
+            ORDER BY COALESCE(s.signal_date, b.signal_date) DESC;
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
-        
         return df
     except Exception as e:
-        st.sidebar.error(f"Daily Executions DB Error: {e}")
+        st.sidebar.error(f"Executions DB Error: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=300)
@@ -371,7 +379,10 @@ def load_silver_history(ticker, timeframe):
 @st.cache_data(ttl=60) 
 def load_etf_sniper_radar():
     try:
-        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        conn = psycopg2.connect(
+            host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
+            user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
+        )
         query = """
             SELECT DISTINCT ON (ticker)
                 ticker AS "ETF Ticker", 
@@ -385,8 +396,8 @@ def load_etf_sniper_radar():
             WHERE ticker IN ('SILVERBEES.NS', 'GOLDBEES.NS', 'NIFTYBEES.NS', 'BANKBEES.NS', 'ITBEES.NS', 'LIQUIDBEES.NS')
             ORDER BY ticker, signal_date DESC;
         """
-        df = pd.read_sql(query, temp_engine)
-        temp_engine.dispose()
+        df = pd.read_sql_query(query, conn)
+        conn.close()
         
         if not df.empty:
             df = df.sort_values(by="signal_date", ascending=False)
@@ -399,7 +410,10 @@ def load_etf_sniper_radar():
 @st.cache_data(ttl=60)
 def load_live_intraday_signals():
     try:
-        temp_engine = create_engine(st.secrets["DATABASE_URL"])
+        conn = psycopg2.connect(
+            host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb",    
+            user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"]
+        )
         query = """
             WITH latest_1d AS (
                 SELECT ticker, nvi_black, nvi_red, rsi_14, macd_black, macd_red, rsi_2 
@@ -445,8 +459,8 @@ def load_live_intraday_signals():
             ORDER BY s.buy_intraday_score DESC
             LIMIT 15;
         """
-        df = pd.read_sql(query, temp_engine)
-        temp_engine.dispose()
+        df = pd.read_sql_query(query, conn)
+        conn.close()
         return df
     except Exception:
         return pd.DataFrame()
