@@ -25,13 +25,15 @@ print("📥 Fetching macro-batch (1D timeframe)...")
 query = "(SELECT * FROM bronze_raw_ohlcv WHERE timeframe = '1d') as macro_bronze"
 df = spark.read.jdbc(url=jdbc_url, table=query, properties=properties)
 
-macro_schema = "ticker string, datetime timestamp, timeframe string, close double, nvi_black double, nvi_red double, rsi_14 double, macd_black double, macd_red double, rsi_2 double, stochrsi_k double, stochrsi_d double"
+# Extract NIFTY for Relative Strength Base
+nifty_df = df.filter(df.ticker == "NIFTYBEES.NS").select("datetime", "close").withColumnRenamed("close", "nifty_close")
+df = df.join(nifty_df, on="datetime", how="left")
+
+macro_schema = "ticker string, datetime timestamp, timeframe string, close double, nvi_black double, nvi_red double, rsi_14 double, macd_black double, macd_red double, rsi_2 double, stochrsi_k double, stochrsi_d double, rs_nifty double"
 
 def process_macro_partition(pdf):
     """
     🏗️ THE HEALER ENGINE (MACRO)
-    Calculates heavy institutional footprints (NVI), daily macro-trends, 
-    and hyper-sensitive daily exhaustion trackers (RSI 2, StochRSI).
     """
     import numpy as np
     import pandas as pd
@@ -39,9 +41,13 @@ def process_macro_partition(pdf):
     pdf = pdf.sort_values('datetime').reset_index(drop=True)
     pdf['close'] = pdf['close'].astype(float)
     pdf['volume'] = pdf['volume'].astype(float)
+    pdf['nifty_close'] = pdf['nifty_close'].ffill().astype(float) # Prevent NaNs
     
     close_series = pdf['close']
     volume_series = pdf['volume']
+    
+    # --- 🛡️ NEW: MACRO RELATIVE STRENGTH ---
+    pdf['rs_nifty'] = (pdf['close'] / pdf['nifty_close']) * 1000
     
     # --- 1. MACRO MACD ---
     ema12 = close_series.ewm(span=12, adjust=False).mean()
@@ -54,13 +60,11 @@ def process_macro_partition(pdf):
     gain = delta.clip(lower=0.0)
     loss = (-delta).clip(lower=0.0)
     
-    # Base RSI 14
     avg_gain_14 = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
     avg_loss_14 = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
     rs_14 = np.where(avg_loss_14 != 0, avg_gain_14 / avg_loss_14, 0.0)
     pdf['rsi_14'] = np.where(avg_loss_14 != 0, 100 - (100 / (1 + rs_14)), 100.0)
     
-    # Hyper-sensitive RSI 2
     avg_gain_2 = gain.ewm(alpha=1/2, min_periods=2, adjust=False).mean()
     avg_loss_2 = loss.ewm(alpha=1/2, min_periods=2, adjust=False).mean()
     rs_2 = np.where(avg_loss_2 != 0, avg_gain_2 / avg_loss_2, 0.0)
@@ -95,7 +99,7 @@ def process_macro_partition(pdf):
     else:
         pdf['nvi_red'] = None
 
-    return pdf[['ticker', 'datetime', 'timeframe', 'close', 'nvi_black', 'nvi_red', 'rsi_14', 'macd_black', 'macd_red', 'rsi_2', 'stochrsi_k', 'stochrsi_d']]
+    return pdf[['ticker', 'datetime', 'timeframe', 'close', 'nvi_black', 'nvi_red', 'rsi_14', 'macd_black', 'macd_red', 'rsi_2', 'stochrsi_k', 'stochrsi_d', 'rs_nifty']]
 
 # ==========================================
 # 2. TRANSFORM & WRITE (To the Macro Table)
