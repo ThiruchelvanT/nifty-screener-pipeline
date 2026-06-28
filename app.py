@@ -48,46 +48,65 @@ def load_ledger_scoreboard():
 def load_active_portfolio(timeframe):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        price_table = "silver_1d_macro" if timeframe == '1d' else "silver_technical_indicators"
+        
+        # 🚀 FAST PATH: We use the pre-calculated latest_close from the Materialized View!
         query = f"""
-            WITH latest_prices AS (
-                SELECT ticker, close FROM (SELECT ticker, close, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn FROM {price_table}) sub WHERE rn = 1
-            ),
-            aggregated_ledger AS (
-                SELECT ticker, target_timeframe, MIN(signal_date) as first_entry_date, COUNT(signal_id) as total_signals, AVG(entry_price) as avg_entry_price
-                FROM gold_signal_ledger WHERE verdict = 'PENDING' AND target_timeframe = '{timeframe}' GROUP BY ticker, target_timeframe
+            WITH aggregated_ledger AS (
+                SELECT 
+                    ticker,
+                    target_timeframe,
+                    MIN(signal_date) as first_entry_date,
+                    COUNT(signal_id) as total_signals,
+                    AVG(entry_price) as avg_entry_price
+                FROM gold_signal_ledger
+                WHERE verdict = 'PENDING' AND target_timeframe = '{timeframe}'
+                GROUP BY ticker, target_timeframe
             )
             SELECT 
                 g.ticker AS "Ticker",
-                CASE WHEN g.target_timeframe = '1d' THEN 'Macro (1D)' WHEN g.target_timeframe = '15m' THEN 'Intraday (15m)' ELSE g.target_timeframe END AS "Category",
+                CASE 
+                    WHEN g.target_timeframe = '1d' THEN 'Macro (1D)'
+                    WHEN g.target_timeframe = '15m' THEN 'Intraday (15m)'
+                    ELSE g.target_timeframe 
+                END AS "Category",
                 g.total_signals AS "Signal Count",
                 TO_CHAR(g.first_entry_date, 'Mon DD, YYYY - HH12:MI AM') AS "Entry Time",
                 ROUND(g.avg_entry_price::numeric, 2) AS "Avg Entry Price",
-                ROUND(s.close::numeric, 2) AS "Current Price",
-                ROUND( (((s.close - g.avg_entry_price) / g.avg_entry_price) * 100)::numeric, 2 ) AS "Unrealized PNL (%)"
-            FROM aggregated_ledger g JOIN latest_prices s ON g.ticker = s.ticker ORDER BY ((s.close - g.avg_entry_price) / g.avg_entry_price) DESC;
+                ROUND(s.latest_close::numeric, 2) AS "Current Price",
+                ROUND( (((s.latest_close - g.avg_entry_price) / g.avg_entry_price) * 100)::numeric, 2 ) AS "Unrealized PNL (%)"
+            FROM aggregated_ledger g
+            -- 🚀 FAST PATH: Joining directly to the Materialized View
+            JOIN gold_screener_latest s ON g.ticker = s.ticker
+            ORDER BY ((s.latest_close - g.avg_entry_price) / g.avg_entry_price) DESC;
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
         return df
-    except Exception: return pd.DataFrame()
+    except Exception as e:
+        st.warning(f"Portfolio Load Error: {e}")
+        return pd.DataFrame()
 
 @st.cache_data(ttl=60)
 def load_daily_pnl(timeframe):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        price_table = "silver_1d_macro" if timeframe == '1d' else "silver_technical_indicators"
+        
+        # 🚀 FAST PATH: Pulling latest_close from Materialized View
         query = f"""
-            WITH latest_prices AS (SELECT ticker, close FROM (SELECT ticker, close, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn FROM {price_table}) sub WHERE rn = 1)
-            SELECT COALESCE(ROUND(AVG(((s.close - g.entry_price) / g.entry_price) * 100)::numeric, 2), 0.00) as pnl_ratio
-            FROM gold_signal_ledger g JOIN latest_prices s ON g.ticker = s.ticker
-            WHERE g.target_timeframe = '{timeframe}' AND g.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date AND g.verdict = 'PENDING';
+            SELECT COALESCE(ROUND(AVG(((s.latest_close - g.entry_price) / g.entry_price) * 100)::numeric, 2), 0.00) as pnl_ratio
+            FROM gold_signal_ledger g 
+            JOIN gold_screener_latest s ON g.ticker = s.ticker
+            WHERE g.target_timeframe = '{timeframe}' 
+              AND g.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date 
+              AND g.verdict = 'PENDING';
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
         if not df.empty and pd.notna(df.iloc[0]['pnl_ratio']): return float(df.iloc[0]['pnl_ratio'])
         return 0.0
-    except Exception: return 0.0
+    except Exception as e:
+        st.warning(f"Daily PNL Load Error: {e}")
+        return 0.0
 
 @st.cache_data(ttl=60)
 def load_daily_executions(timeframe):
