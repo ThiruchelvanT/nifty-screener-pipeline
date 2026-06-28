@@ -154,15 +154,22 @@ def load_period_performance(timeframe, days):
 def fetch_macro_trade_lifecycle(timeframe, days):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
+        
+        # 🚀 THE FIX: No more LATERAL JOIN. We pull the settlement_date directly from the updated row!
         query = f"""
             SELECT 
-                b.ticker AS "Ticker", TO_CHAR(b.signal_date, 'Mon DD - HH12:MI AM') AS "Buy Time", ROUND(b.entry_price::numeric, 2) AS "Buy Price",
-                COALESCE(TO_CHAR(s.signal_date, 'Mon DD - HH12:MI AM'), CASE WHEN b.verdict != 'PENDING' THEN 'Closed' ELSE 'Active' END) AS "Sold Time",
-                COALESCE(ROUND(s.entry_price::numeric, 2), CASE WHEN b.verdict != 'PENDING' THEN ROUND((b.entry_price * (1 + (b.pnl_percentage / 100)))::numeric, 2) ELSE NULL END) AS "Sold Price",
-                COALESCE(ROUND(b.pnl_percentage::numeric, 2), 0.00) AS "Net Return", b.verdict AS "Status"
-            FROM gold_signal_ledger b
-            LEFT JOIN LATERAL (SELECT signal_date, entry_price FROM gold_signal_ledger WHERE ticker = b.ticker AND target_timeframe = b.target_timeframe AND signal_type ~* 'SELL' AND signal_date > b.signal_date ORDER BY signal_date ASC LIMIT 1) s ON true
-            WHERE b.target_timeframe = '{timeframe}' AND b.signal_date >= NOW() - INTERVAL '{days} days' AND b.signal_type !~* 'SELL' ORDER BY b.signal_date DESC;
+                ticker AS "Ticker", 
+                TO_CHAR(signal_date, 'Mon DD - HH12:MI AM') AS "Buy Time", 
+                ROUND(entry_price::numeric, 2) AS "Buy Price",
+                COALESCE(TO_CHAR(settlement_date, 'Mon DD - HH12:MI AM'), CASE WHEN verdict != 'PENDING' THEN 'Closed' ELSE 'Active' END) AS "Sold Time",
+                ROUND(settlement_price::numeric, 2) AS "Sold Price",
+                COALESCE(ROUND(pnl_percentage::numeric, 2), 0.00) AS "Net Return", 
+                verdict AS "Status"
+            FROM gold_signal_ledger
+            WHERE target_timeframe = '{timeframe}' 
+              AND signal_date >= NOW() - INTERVAL '{days} days' 
+              AND signal_type !~* 'SELL' 
+            ORDER BY signal_date DESC;
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
@@ -223,7 +230,22 @@ def load_silver_history(ticker, timeframe):
 def load_etf_sniper_radar():
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        query = "SELECT DISTINCT ON (ticker) ticker AS \"ETF Ticker\", TO_CHAR(signal_date, 'Mon DD, YYYY - HH12:MI AM') AS \"Time Locked\", signal_date, signal_type AS \"Signal Type\", entry_price AS \"Entry Price\", target_timeframe AS \"Timeframe\", verdict AS \"Status\" FROM gold_signal_ledger WHERE ticker IN ('SILVERBEES.NS', 'GOLDBEES.NS', 'NIFTYBEES.NS', 'BANKBEES.NS', 'ITBEES.NS', 'LIQUIDBEES.NS') ORDER BY ticker, signal_date DESC;"
+        
+        # 🚀 THE FIX: Bounded the search to 30 days to prevent infinite sorting overhead
+        query = """
+            SELECT DISTINCT ON (ticker) 
+                ticker AS "ETF Ticker", 
+                TO_CHAR(signal_date, 'Mon DD, YYYY - HH12:MI AM') AS "Time Locked", 
+                signal_date, 
+                signal_type AS "Signal Type", 
+                entry_price AS "Entry Price", 
+                target_timeframe AS "Timeframe", 
+                verdict AS "Status" 
+            FROM gold_signal_ledger 
+            WHERE ticker IN ('SILVERBEES.NS', 'GOLDBEES.NS', 'NIFTYBEES.NS', 'BANKBEES.NS', 'ITBEES.NS', 'LIQUIDBEES.NS')
+              AND signal_date >= NOW() - INTERVAL '30 days'
+            ORDER BY ticker, signal_date DESC;
+        """
         df = pd.read_sql_query(query, conn)
         conn.close()
         if not df.empty:
@@ -477,12 +499,12 @@ with tab4:
         cursor.execute("SELECT SUM(COALESCE(allocated_capital, 0)) FROM gold_signal_ledger WHERE target_timeframe = '1d' AND verdict = 'PENDING'")
         invested_capital = float(cursor.fetchone()[0] or 0.0)
         
+        # 🚀 THE FIX: Use gold_screener_latest instead of scanning the entire silver_1d_macro table
         cursor.execute("""
-            SELECT SUM((s.close - g.entry_price) * g.quantity) 
+            SELECT SUM((s.latest_close - g.entry_price) * g.quantity) 
             FROM gold_signal_ledger g
-            JOIN silver_1d_macro s ON g.ticker = s.ticker
+            JOIN gold_screener_latest s ON g.ticker = s.ticker
             WHERE g.target_timeframe = '1d' AND g.verdict = 'PENDING'
-              AND s.datetime = (SELECT MAX(datetime) FROM silver_1d_macro WHERE ticker = s.ticker)
         """)
         unrealized_pnl = float(cursor.fetchone()[0] or 0.0)
         conn.close()
