@@ -521,6 +521,33 @@ with tab4:
         dash_c3.metric(label="🔒 Invested Capital", value=f"₹{invested_capital:,.2f}")
         dash_c4.metric(label="📈 Live Unrealized PNL", value=f"₹{unrealized_pnl:,.2f}", delta="Fluctuating", delta_color="off")
         st.divider()
+
+        # --- 🏦 CAPITAL INJECTION MODULE ---
+        with st.expander("🏦 Manage Portfolio Capital"):
+            col_a, col_b = st.columns([3, 1])
+            with col_a:
+                new_capital = st.number_input("Update Total Seed Capital (₹)", min_value=10000, value=int(seed_capital), step=10000)
+            with col_b:
+                st.write("") # Spacing
+                st.write("") 
+                if st.button("Inject Capital"):
+                    try:
+                        conn_update = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
+                        cursor_update = conn_update.cursor()
+                        cursor_update.execute("""
+                            UPDATE system_config 
+                            SET key_value = %s, last_updated = NOW() 
+                            WHERE key_name = 'STARTING_MACRO_CAPITAL'
+                        """, (str(new_capital),))
+                        conn_update.commit()
+                        conn_update.close()
+                        st.success(f"✅ Capital successfully updated to ₹{new_capital:,.2f}")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to inject capital: {e}")
+
+    
     except Exception as e:
         st.warning(f"Failed to load Portfolio Metrics: {e}")
         
