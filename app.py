@@ -197,9 +197,14 @@ def load_gold_data():
         latest_date = time_df['true_market_time'].iloc[0]
         if pd.notna(latest_date):
             ts = pd.to_datetime(latest_date)
-            if ts.tz is None: ts = ts.tz_localize('UTC')
-            ts_ist = ts.tz_convert('Asia/Kolkata')
-            return df, ts_ist # 🚀 RETURN THE RAW DATETIME OBJECT
+            
+            # 🚀 THE FIX: If the DB time is naive, localize it DIRECTLY to IST, because the scraper already saves in IST.
+            if ts.tz is None: 
+                ts_ist = ts.tz_localize('Asia/Kolkata')
+            else:
+                ts_ist = ts.tz_convert('Asia/Kolkata')
+                
+            return df, ts_ist
         return df, None
     except Exception as e:
         return None, None
