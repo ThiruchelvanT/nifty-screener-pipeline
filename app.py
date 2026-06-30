@@ -48,8 +48,6 @@ def load_ledger_scoreboard():
 def load_active_portfolio(timeframe):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        
-        # 🚀 FAST PATH: We use the pre-calculated latest_close from the Materialized View!
         query = f"""
             WITH aggregated_ledger AS (
                 SELECT 
@@ -75,7 +73,6 @@ def load_active_portfolio(timeframe):
                 ROUND(s.latest_close::numeric, 2) AS "Current Price",
                 ROUND( (((s.latest_close - g.avg_entry_price) / g.avg_entry_price) * 100)::numeric, 2 ) AS "Unrealized PNL (%)"
             FROM aggregated_ledger g
-            -- 🚀 FAST PATH: Joining directly to the Materialized View
             JOIN gold_screener_latest s ON g.ticker = s.ticker
             ORDER BY ((s.latest_close - g.avg_entry_price) / g.avg_entry_price) DESC;
         """
@@ -90,14 +87,13 @@ def load_active_portfolio(timeframe):
 def load_daily_pnl(timeframe):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        
-        # 🚀 FAST PATH: Pulling latest_close from Materialized View
         query = f"""
             SELECT COALESCE(ROUND(AVG(((s.latest_close - g.entry_price) / g.entry_price) * 100)::numeric, 2), 0.00) as pnl_ratio
             FROM gold_signal_ledger g 
             JOIN gold_screener_latest s ON g.ticker = s.ticker
             WHERE g.target_timeframe = '{timeframe}' 
-              AND g.signal_date::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date 
+              AND (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') >= (DATE_TRUNC('day', NOW() AT TIME ZONE 'Asia/Kolkata'))
+              AND (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') <  (DATE_TRUNC('day', NOW() AT TIME ZONE 'Asia/Kolkata') + INTERVAL '1 day')
               AND g.verdict = 'PENDING';
         """
         df = pd.read_sql_query(query, conn)
@@ -112,8 +108,6 @@ def load_daily_pnl(timeframe):
 def load_daily_executions(timeframe):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        
-        # 🚀 THE FIX: Apply the same 24-hour IST bounding box to the execution history
         query = f"""
             WITH today_activity AS (
                 SELECT DISTINCT ON (g.ticker)
@@ -138,6 +132,7 @@ def load_daily_executions(timeframe):
         return df
     except Exception as e:
         return pd.DataFrame()
+
 @st.cache_data(ttl=300)
 def load_period_performance(timeframe, days):
     try:
@@ -157,8 +152,6 @@ def load_period_performance(timeframe, days):
 def fetch_macro_trade_lifecycle(timeframe, days):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        
-        # 🚀 THE FIX: No more LATERAL JOIN. We pull the settlement_date directly from the updated row!
         query = f"""
             SELECT 
                 ticker AS "Ticker", 
@@ -233,8 +226,6 @@ def load_silver_history(ticker, timeframe):
 def load_etf_sniper_radar():
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        
-        # 🚀 THE FIX: Bounded the search to 30 days to prevent infinite sorting overhead
         query = """
             SELECT DISTINCT ON (ticker) 
                 ticker AS "ETF Ticker", 
@@ -262,12 +253,32 @@ def load_etf_sniper_radar():
 def load_live_intraday_signals():
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
+        
+        # 🚀 THE FIX: We bound the subqueries to the last 48 hours to ensure we don't fetch ghost prices from weeks ago if Lambda crashes.
         query = """
-            WITH latest_1d AS (SELECT ticker, nvi_black, nvi_red, rsi_14, macd_black, macd_red, rsi_2 FROM (SELECT *, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn FROM silver_1d_macro) sub WHERE rn = 1),
-            latest_15m AS (SELECT ticker, close, rsi_2, rsi_14, stochrsi_k, stochrsi_d, macd_black, macd_red FROM (SELECT *, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn FROM silver_technical_indicators) sub WHERE rn = 1),
-            scored_stocks AS (SELECT m.ticker, m.close, (CASE WHEN d.nvi_black > d.nvi_red THEN 20 ELSE 0 END + CASE WHEN m.macd_black > m.macd_red THEN 25 ELSE 0 END + CASE WHEN m.rsi_14 > 45 THEN 25 ELSE 0 END + CASE WHEN m.rsi_2 < 5 AND m.stochrsi_k < 10 AND m.stochrsi_d < 10 THEN 30 ELSE 0 END) AS buy_intraday_score FROM latest_15m m JOIN latest_1d d ON m.ticker = d.ticker)
-            SELECT s.ticker AS "Stock", ROUND(s.close::numeric, 2) AS "Current Price", s.buy_intraday_score AS "Intraday Score", CASE WHEN l.ticker IS NOT NULL THEN '🟢 BOUGHT (Active)' WHEN s.buy_intraday_score >= 85 THEN '⚡ BUY TRIGGERED (Locking)' WHEN s.buy_intraday_score >= 70 THEN '🔥 HEATING UP' ELSE '⏳ WAITING' END AS "Signal Status"
-            FROM scored_stocks s LEFT JOIN gold_signal_ledger l ON s.ticker = l.ticker AND l.verdict = 'PENDING' AND l.target_timeframe = '15m' WHERE s.buy_intraday_score >= 50 ORDER BY s.buy_intraday_score DESC LIMIT 15;
+            WITH latest_1d AS (
+                SELECT ticker, nvi_black, nvi_red, rsi_14, macd_black, macd_red, rsi_2 
+                FROM (SELECT *, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn 
+                      FROM silver_1d_macro
+                      WHERE datetime >= CURRENT_DATE - INTERVAL '5 days') sub 
+                WHERE rn = 1
+            ),
+            latest_15m AS (
+                SELECT ticker, close, rsi_2, rsi_14, stochrsi_k, stochrsi_d, macd_black, macd_red 
+                FROM (SELECT *, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn 
+                      FROM silver_technical_indicators
+                      WHERE datetime >= CURRENT_DATE - INTERVAL '2 days') sub 
+                WHERE rn = 1
+            ),
+            scored_stocks AS (
+                SELECT m.ticker, m.close, (CASE WHEN d.nvi_black > d.nvi_red THEN 20 ELSE 0 END + CASE WHEN m.macd_black > m.macd_red THEN 25 ELSE 0 END + CASE WHEN m.rsi_14 > 45 THEN 25 ELSE 0 END + CASE WHEN m.rsi_2 < 5 AND m.stochrsi_k < 10 AND m.stochrsi_d < 10 THEN 30 ELSE 0 END) AS buy_intraday_score 
+                FROM latest_15m m JOIN latest_1d d ON m.ticker = d.ticker
+            )
+            SELECT s.ticker AS "Stock", ROUND(s.close::numeric, 2) AS "Current Price", s.buy_intraday_score AS "Intraday Score", 
+            CASE WHEN l.ticker IS NOT NULL THEN '🟢 BOUGHT (Active)' WHEN s.buy_intraday_score >= 85 THEN '⚡ BUY TRIGGERED (Locking)' WHEN s.buy_intraday_score >= 70 THEN '🔥 HEATING UP' ELSE '⏳ WAITING' END AS "Signal Status"
+            FROM scored_stocks s LEFT JOIN gold_signal_ledger l ON s.ticker = l.ticker AND l.verdict = 'PENDING' AND l.target_timeframe = '15m' 
+            WHERE s.buy_intraday_score >= 50 
+            ORDER BY s.buy_intraday_score DESC LIMIT 15;
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
