@@ -409,7 +409,7 @@ if data_result[1] is not None:
         valid_till_ts = ts_ist.replace(minute=next_min, second=0, microsecond=0)
         
     # Check if the market is closed for the day (After 3:30 PM)
-    if valid_till_ts.hour > 15 or (valid_till_ts.hour == 15 and valid_till_ts.minute > 30):
+    if valid_till_ts.hour > 15 or (valid_till_ts.hour == 15 and valid_till_ts.minute >= 30):
         valid_till_str = "Next Trading Day 09:15 AM"
     else:
         valid_till_str = valid_till_ts.strftime('%d %b %Y, %I:%M %p')
