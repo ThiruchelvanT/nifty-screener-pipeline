@@ -112,6 +112,8 @@ def load_daily_pnl(timeframe):
 def load_daily_executions(timeframe):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
+        
+        # 🚀 THE FIX: Apply the same 24-hour IST bounding box to the execution history
         query = f"""
             WITH today_activity AS (
                 SELECT DISTINCT ON (g.ticker)
@@ -123,7 +125,9 @@ def load_daily_executions(timeframe):
                     COALESCE(TO_CHAR(CASE WHEN g.signal_type ~* 'SELL' THEN (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') ELSE NULL END, 'HH12:MI AM'), (SELECT TO_CHAR((signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata'), 'HH12:MI AM') FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1), 'Active') AS "Exit Time",
                     g.verdict AS "Status", g.pnl_percentage
                 FROM gold_signal_ledger g
-                WHERE g.target_timeframe = '{timeframe}' AND (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+                WHERE g.target_timeframe = '{timeframe}' 
+                  AND (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') >= (DATE_TRUNC('day', NOW() AT TIME ZONE 'Asia/Kolkata'))
+                  AND (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') <  (DATE_TRUNC('day', NOW() AT TIME ZONE 'Asia/Kolkata') + INTERVAL '1 day')
                 ORDER BY g.ticker, g.signal_date DESC
             )
             SELECT "Ticker", "Action", "Execution Price", "Exit Price", "Execution Time", "Exit Time", "Status", COALESCE(ROUND(pnl_percentage::numeric, 2), ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2), 0.00) AS "PNL (%)"
@@ -134,7 +138,6 @@ def load_daily_executions(timeframe):
         return df
     except Exception as e:
         return pd.DataFrame()
-
 @st.cache_data(ttl=300)
 def load_period_performance(timeframe, days):
     try:
