@@ -193,15 +193,14 @@ def load_gold_data():
         time_df = pd.read_sql_query("SELECT MAX(datetime) as true_market_time FROM silver_technical_indicators;", conn)
         conn.close() 
         if df.empty: return None, None
+        
         latest_date = time_df['true_market_time'].iloc[0]
         if pd.notna(latest_date):
             ts = pd.to_datetime(latest_date)
             if ts.tz is None: ts = ts.tz_localize('UTC')
             ts_ist = ts.tz_convert('Asia/Kolkata')
-            display_text = f"Latest Market Data - {ts_ist.strftime('%b %d, %Y - %I:%M %p IST')}"
-        else:
-            display_text = "Market Data: Unknown"
-        return df, display_text
+            return df, ts_ist # 🚀 RETURN THE RAW DATETIME OBJECT
+        return df, None
     except Exception as e:
         return None, None
 
@@ -390,6 +389,38 @@ if macro_data:
 # 5. MAIN UI (Tabs)
 # ==========================================
 st.title("⚖️ The Market Oracle")
+# --- 🚀 FLOATING TIME HUD ---
+if data_result[1] is not None:
+    ts_ist = data_result[1]
+    last_refresh_str = ts_ist.strftime('%d %b %Y, %I:%M %p')
+    
+    # Calculate the exact next 15-minute interval
+    minutes = ts_ist.minute
+    next_min = ((minutes // 15) + 1) * 15
+    
+    if next_min >= 60:
+        valid_till_ts = ts_ist.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(hours=1)
+    else:
+        valid_till_ts = ts_ist.replace(minute=next_min, second=0, microsecond=0)
+        
+    # Check if the market is closed for the day (After 3:30 PM)
+    if valid_till_ts.hour > 15 or (valid_till_ts.hour == 15 and valid_till_ts.minute > 30):
+        valid_till_str = "Next Trading Day 09:15 AM"
+    else:
+        valid_till_str = valid_till_ts.strftime('%d %b %Y, %I:%M %p')
+else:
+    last_refresh_str = "Awaiting Data"
+    valid_till_str = "Awaiting Data"
+
+# Inject Custom CSS to float the box in the top right corner
+st.markdown(f"""
+    <div style="position: absolute; top: -45px; right: 0px; text-align: right; font-size: 13px; color: #a0a0a0; background-color: #161b22; padding: 8px 15px; border-radius: 8px; border: 1px solid #30363d; z-index: 100; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+        <span style="color:#E0E0E0;">🔄 <b>Last Refresh:</b></span> {last_refresh_str}<br>
+        <span style="color:#26A69A;">⏳ <b>Valid Till:</b></span> {valid_till_str}
+    </div>
+""", unsafe_allow_html=True)
+# ----------------------------
+
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 The Screener", "📈 The X-Ray Sandbox", "⚡ Intraday Ledger", "🏛️ Macro Ledger", "🎯 ETF Sniper Radar"])
 
 # ------------------------------------------
