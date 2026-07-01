@@ -55,7 +55,8 @@ def load_active_portfolio(timeframe):
                     target_timeframe,
                     MIN(signal_date) as first_entry_date,
                     COUNT(signal_id) as total_signals,
-                    AVG(entry_price) as avg_entry_price
+                    AVG(entry_price) as avg_entry_price,
+                    SUM(COALESCE(allocated_capital, 0)) as total_invested
                 FROM gold_signal_ledger
                 WHERE verdict = 'PENDING' AND target_timeframe = '{timeframe}'
                 GROUP BY ticker, target_timeframe
@@ -68,6 +69,7 @@ def load_active_portfolio(timeframe):
                     ELSE g.target_timeframe 
                 END AS "Category",
                 g.total_signals AS "Signal Count",
+                ROUND(g.total_invested::numeric, 2) AS "Invested Amount",
                 TO_CHAR(g.first_entry_date, 'Mon DD, YYYY - HH12:MI AM') AS "Entry Time",
                 ROUND(g.avg_entry_price::numeric, 2) AS "Avg Entry Price",
                 ROUND(s.latest_close::numeric, 2) AS "Current Price",
@@ -485,7 +487,7 @@ with tab2:
             fig.update_layout(height=1200, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, margin=dict(l=0, r=90, t=30, b=0), dragmode='pan', xaxis_rangeslider_visible=False)
             fig.update_xaxes(type='category', nticks=12, tickangle=-45, categoryorder='array', categoryarray=chart_df['display_time'])
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom':False, 'displayModeBar': False})
-        else: st.warning("Historical data is still warming up for this asset.")
+    else: st.warning("Historical data is still warming up for this asset.")
 
 # ------------------------------------------
 # TAB 3: INTRADAY LEDGER (15m)
@@ -512,7 +514,17 @@ with tab3:
     st.divider()
 
     st.markdown("### 🟢 Active Open Intraday")
-    if not df_intra_portfolio.empty: st.dataframe(df_intra_portfolio.style.map(lambda val: f"color: {'#26A69A' if val > 0 else '#EF5350' if val < 0 else 'gray'}; font-weight: bold;", subset=["Unrealized PNL (%)"]), use_container_width=True, hide_index=True)
+    if not df_intra_portfolio.empty: 
+        st.dataframe(
+            df_intra_portfolio.style.map(lambda val: f"color: {'#26A69A' if val > 0 else '#EF5350' if val < 0 else 'gray'}; font-weight: bold;", subset=["Unrealized PNL (%)"]), 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Invested Amount": st.column_config.NumberColumn("Invested Amount", format="₹%.2f"),
+                "Avg Entry Price": st.column_config.NumberColumn("Avg Entry Price", format="₹%.2f"),
+                "Current Price": st.column_config.NumberColumn("Current Price", format="₹%.2f")
+            }
+        )
     else: st.info("No active open intraday positions.")
     st.divider()
 
@@ -565,11 +577,13 @@ with tab4:
         
         st.markdown("<style>.big-font {font-size:30px !important; font-weight: bold; color: #E0E0E0;}</style>", unsafe_allow_html=True)
         
-        dash_c1, dash_c2, dash_c3, dash_c4 = st.columns(4)
+        # Expanded layout to 5 columns to introduce Net Realized Profit
+        dash_c1, dash_c2, dash_c3, dash_c4, dash_c5 = st.columns(5)
         dash_c1.metric(label="💰 Total Macro Equity", value=f"₹{current_equity:,.2f}", delta=f"{total_growth_pct:.2f}% Net Return")
         dash_c2.metric(label="💵 Available Cash", value=f"₹{available_cash:,.2f}")
         dash_c3.metric(label="🔒 Invested Capital", value=f"₹{invested_capital:,.2f}")
         dash_c4.metric(label="📈 Live Unrealized PNL", value=f"₹{unrealized_pnl:,.2f}", delta="Fluctuating", delta_color="off")
+        dash_c5.metric(label="💸 Net Realized Profit", value=f"₹{realized_pnl:,.2f}", help="Total harvested profit with 0.25% brokerage, taxes, and slippage already deducted.")
         st.divider()
 
         # --- 🏦 CAPITAL INJECTION MODULE ---
@@ -603,7 +617,16 @@ with tab4:
         
     df_macro_portfolio = load_active_portfolio('1d')
     if not df_macro_portfolio.empty:
-        st.dataframe(df_macro_portfolio.style.map(lambda val: f"color: {'#26A69A' if val > 0 else '#EF5350' if val < 0 else 'gray'}; font-weight: bold;", subset=["Unrealized PNL (%)"]), use_container_width=True, hide_index=True)
+        st.dataframe(
+            df_macro_portfolio.style.map(lambda val: f"color: {'#26A69A' if val > 0 else '#EF5350' if val < 0 else 'gray'}; font-weight: bold;", subset=["Unrealized PNL (%)"]), 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Invested Amount": st.column_config.NumberColumn("Invested Amount", format="₹%.2f"),
+                "Avg Entry Price": st.column_config.NumberColumn("Avg Entry Price", format="₹%.2f"),
+                "Current Price": st.column_config.NumberColumn("Current Price", format="₹%.2f")
+            }
+        )
     else: st.info("No active open macro positions.")
     st.divider()
     
