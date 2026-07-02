@@ -517,21 +517,25 @@ with tab3:
         # Rule A: Strictly keep only Intraday-related algorithm actions
         df_intra_today = df_intra_today[df_intra_today['Action'].str.contains('INTRADAY|HARVEST|SQUAREOFF', case=False, na=False)]
         
-        # Rule B: Erase "Phantom Sells" (Scanner sell signals for stocks we didn't actually own)
-        # If Execution Price is missing, we never bought it. Drop it.
+        # Rule B: Erase "Phantom Sells" (missing Execution Price)
         df_intra_today = df_intra_today.dropna(subset=['Execution Price'])
 
-    intra_pnl_today = load_daily_pnl('15m')
+    # --- 🚀 NEW: Dynamic Settled PNL & Profit Calculation ---
+    intra_pnl_today = 0.00
+    profit_taken_1qty = 0.00
+    
+    if not df_intra_today.empty:
+        # Isolate trades that are fully settled (must have an Exit Price)
+        settled_df = df_intra_today.dropna(subset=['Exit Price'])
+        
+        if not settled_df.empty:
+            # 1. Sum the accurate PNL percentages
+            intra_pnl_today = settled_df['PNL (%)'].astype(float).sum()
+            # 2. Sum the raw point capture
+            profit_taken_1qty = (settled_df['Exit Price'].astype(float) - settled_df['Execution Price'].astype(float)).sum()
+
     df_intra_portfolio = load_active_portfolio('15m')
     intra_avg_pnl = df_intra_portfolio["Unrealized PNL (%)"].mean() if not df_intra_portfolio.empty else 0.00
-
-    # --- 🚀 NEW: Calculate Profit Taken (Assuming 1 Qty) ---
-    profit_taken_1qty = 0.0
-    if not df_intra_today.empty:
-        # Filter for closed trades (must have both an Execution Price and an Exit Price)
-        settled_df = df_intra_today.dropna(subset=['Exit Price'])
-        if not settled_df.empty:
-            profit_taken_1qty = (settled_df['Exit Price'].astype(float) - settled_df['Execution Price'].astype(float)).sum()
 
     # --- UI LAYOUT: Expanded to 5 columns ---
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -541,7 +545,7 @@ with tab3:
     c4.metric("Avg Unrealized PNL", f"{intra_avg_pnl:.2f}%", delta="Profitable" if intra_avg_pnl > 0 else "Drawdown", delta_color="normal" if intra_avg_pnl > 0 else "inverse")
     c5.metric("💸 Profit Taken (1 Qty)", f"₹{profit_taken_1qty:.2f}", help="Total pure points captured today, assuming exactly 1 share bought/sold per trade.")
     st.divider()
-
+    
     st.markdown("### 📡 Live Signal Radar")
     df_live_signals = load_live_intraday_signals()
     if not df_live_signals.empty:
