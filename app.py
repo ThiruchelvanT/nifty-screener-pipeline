@@ -89,12 +89,12 @@ def load_active_portfolio(timeframe):
 def load_daily_pnl(timeframe):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        # 🚀 THE FIX: Calculate true settled PNL sum for the current day without timezone over-engineering.
+        # 🛡️ TIME FIX: Explicitly match the date against IST current date
         query = f"""
             SELECT COALESCE(ROUND(SUM(pnl_percentage)::numeric, 2), 0.00) as pnl_ratio
             FROM gold_signal_ledger 
             WHERE target_timeframe = '{timeframe}' 
-              AND DATE(signal_date) = CURRENT_DATE
+              AND DATE(signal_date) = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
               AND verdict != 'PENDING';
         """
         df = pd.read_sql_query(query, conn)
@@ -109,7 +109,7 @@ def load_daily_pnl(timeframe):
 def load_daily_executions(timeframe):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        # 🚀 THE FIX: Unified date matching to prevent cross-timezone bleeding.
+        # 🛡️ TIME FIX: Removed the AT TIME ZONE 'UTC' double-cast because DB is now natively IST
         query = f"""
             WITH today_activity AS (
                 SELECT DISTINCT ON (g.ticker)
@@ -117,12 +117,12 @@ def load_daily_executions(timeframe):
                     COALESCE((SELECT signal_type FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1), g.signal_type) AS "Action",
                     COALESCE(CASE WHEN g.signal_type !~* 'SELL' THEN ROUND(g.entry_price::numeric, 2) ELSE NULL END, (SELECT ROUND(entry_price::numeric, 2) FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1)) AS "Execution Price",
                     COALESCE(CASE WHEN g.signal_type ~* 'SELL' THEN ROUND(g.entry_price::numeric, 2) ELSE NULL END, (SELECT ROUND(entry_price::numeric, 2) FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1)) AS "Exit Price",
-                    TO_CHAR(COALESCE(CASE WHEN g.signal_type !~* 'SELL' THEN (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') ELSE NULL END, (SELECT (signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1), (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')), 'HH12:MI AM') AS "Execution Time",
-                    COALESCE(TO_CHAR(CASE WHEN g.signal_type ~* 'SELL' THEN (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') ELSE NULL END, 'HH12:MI AM'), (SELECT TO_CHAR((signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata'), 'HH12:MI AM') FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1), 'Active') AS "Exit Time",
+                    TO_CHAR(COALESCE(CASE WHEN g.signal_type !~* 'SELL' THEN g.signal_date ELSE NULL END, (SELECT signal_date FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1), g.signal_date), 'HH12:MI AM') AS "Execution Time",
+                    COALESCE(TO_CHAR(CASE WHEN g.signal_type ~* 'SELL' THEN g.signal_date ELSE NULL END, 'HH12:MI AM'), (SELECT TO_CHAR(signal_date, 'HH12:MI AM') FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1), 'Active') AS "Exit Time",
                     g.verdict AS "Status", g.pnl_percentage
                 FROM gold_signal_ledger g
                 WHERE g.target_timeframe = '{timeframe}' 
-                  AND DATE(g.signal_date) = CURRENT_DATE
+                  AND DATE(g.signal_date) = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
                 ORDER BY g.ticker, g.signal_date DESC
             )
             SELECT "Ticker", "Action", "Execution Price", "Exit Price", "Execution Time", "Exit Time", "Status", COALESCE(ROUND(pnl_percentage::numeric, 2), ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2), 0.00) AS "PNL (%)"
@@ -138,10 +138,16 @@ def load_daily_executions(timeframe):
 def load_period_performance(timeframe, days):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
+        # 🛡️ TIME FIX: Removed double-cast timezone shifting
         query = f"""
-            SELECT (signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date as "Date", SUM(COALESCE(pnl_percentage, 0)) as "Daily PNL (%)"
-            FROM gold_signal_ledger WHERE target_timeframe = '{timeframe}' AND signal_date >= NOW() - INTERVAL '{days} days' AND verdict != 'PENDING' AND signal_type !~* 'SELL' 
-            GROUP BY "Date" ORDER BY "Date" ASC;
+            SELECT DATE(signal_date) as "Date", SUM(COALESCE(pnl_percentage, 0)) as "Daily PNL (%)"
+            FROM gold_signal_ledger 
+            WHERE target_timeframe = '{timeframe}' 
+              AND signal_date >= NOW() - INTERVAL '{days} days' 
+              AND verdict != 'PENDING' 
+              AND signal_type !~* 'SELL' 
+            GROUP BY "Date" 
+            ORDER BY "Date" ASC;
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
@@ -199,7 +205,6 @@ def load_gold_data():
         if pd.notna(latest_date):
             ts = pd.to_datetime(latest_date)
             
-            # 🚀 THE FIX: If the DB time is naive, localize it DIRECTLY to IST, because the scraper already saves in IST.
             if ts.tz is None: 
                 ts_ist = ts.tz_localize('Asia/Kolkata')
             else:
@@ -259,7 +264,6 @@ def load_live_intraday_signals():
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
         
-        # 🚀 THE FIX: We bound the subqueries to the last 48 hours to ensure we don't fetch ghost prices from weeks ago if Lambda crashes.
         query = """
             WITH latest_1d AS (
                 SELECT ticker, nvi_black, nvi_red, rsi_14, macd_black, macd_red, rsi_2 
