@@ -89,13 +89,24 @@ def load_active_portfolio(timeframe):
 def load_daily_pnl(timeframe):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        # 🛡️ TIME FIX: Explicitly match the date against IST current date
+        
+        # 🚀 THE FIX: We wrap the dynamic CSV logic in a CTE, then SUM the true calculated PNL.
         query = f"""
-            SELECT COALESCE(ROUND(SUM(pnl_percentage)::numeric, 2), 0.00) as pnl_ratio
-            FROM gold_signal_ledger 
-            WHERE target_timeframe = '{timeframe}' 
-              AND DATE(signal_date) = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
-              AND verdict != 'PENDING';
+            WITH today_activity AS (
+                SELECT DISTINCT ON (g.ticker)
+                    COALESCE(CASE WHEN g.signal_type !~* 'SELL' THEN ROUND(g.entry_price::numeric, 2) ELSE NULL END, (SELECT ROUND(entry_price::numeric, 2) FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1)) AS "Execution Price",
+                    COALESCE(CASE WHEN g.signal_type ~* 'SELL' THEN ROUND(g.entry_price::numeric, 2) ELSE NULL END, (SELECT ROUND(entry_price::numeric, 2) FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1)) AS "Exit Price",
+                    g.pnl_percentage
+                FROM gold_signal_ledger g
+                WHERE g.target_timeframe = '{timeframe}' 
+                  AND DATE(g.signal_date) = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
+                ORDER BY g.ticker, g.signal_date DESC
+            )
+            SELECT COALESCE(ROUND(SUM(
+                COALESCE(pnl_percentage::numeric, ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2), 0.00)
+            ), 2), 0.00) AS pnl_ratio
+            FROM today_activity
+            WHERE "Exit Price" IS NOT NULL;
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
@@ -497,16 +508,38 @@ with tab2:
 # ------------------------------------------
 with tab3:
     st.subheader("⚡ Intraday Sniper Operations")
+    
+    # 1. Load Raw Data
     df_intra_today = load_daily_executions('15m')
+    
+    # --- 🧹 DATA CLEANING: Strict Intraday & Phantom Signal Filter ---
+    if not df_intra_today.empty:
+        # Rule A: Strictly keep only Intraday-related algorithm actions
+        df_intra_today = df_intra_today[df_intra_today['Action'].str.contains('INTRADAY|HARVEST|SQUAREOFF', case=False, na=False)]
+        
+        # Rule B: Erase "Phantom Sells" (Scanner sell signals for stocks we didn't actually own)
+        # If Execution Price is missing, we never bought it. Drop it.
+        df_intra_today = df_intra_today.dropna(subset=['Execution Price'])
+
     intra_pnl_today = load_daily_pnl('15m')
     df_intra_portfolio = load_active_portfolio('15m')
     intra_avg_pnl = df_intra_portfolio["Unrealized PNL (%)"].mean() if not df_intra_portfolio.empty else 0.00
 
-    c1, c2, c3, c4 = st.columns(4)
+    # --- 🚀 NEW: Calculate Profit Taken (Assuming 1 Qty) ---
+    profit_taken_1qty = 0.0
+    if not df_intra_today.empty:
+        # Filter for closed trades (must have both an Execution Price and an Exit Price)
+        settled_df = df_intra_today.dropna(subset=['Exit Price'])
+        if not settled_df.empty:
+            profit_taken_1qty = (settled_df['Exit Price'].astype(float) - settled_df['Execution Price'].astype(float)).sum()
+
+    # --- UI LAYOUT: Expanded to 5 columns ---
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Today's Executions", len(df_intra_today))
     c2.metric("Today's Settled PNL", f"{intra_pnl_today:.2f}%", delta=f"{intra_pnl_today:.2f}%")
     c3.metric("Open Intraday Positions", len(df_intra_portfolio))
     c4.metric("Avg Unrealized PNL", f"{intra_avg_pnl:.2f}%", delta="Profitable" if intra_avg_pnl > 0 else "Drawdown", delta_color="normal" if intra_avg_pnl > 0 else "inverse")
+    c5.metric("💸 Profit Taken (1 Qty)", f"₹{profit_taken_1qty:.2f}", help="Total pure points captured today, assuming exactly 1 share bought/sold per trade.")
     st.divider()
 
     st.markdown("### 📡 Live Signal Radar")
@@ -532,8 +565,10 @@ with tab3:
     st.divider()
 
     st.markdown("### 📋 Today's Order Book")
-    if not df_intra_today.empty: st.dataframe(df_intra_today[["Ticker", "Action", "Execution Price", "Exit Price", "Execution Time", "Exit Time", "Status", "PNL (%)"]], use_container_width=True, hide_index=True)
-    else: st.info("No intraday actions executed yet today.")
+    if not df_intra_today.empty: 
+        st.dataframe(df_intra_today[["Ticker", "Action", "Execution Price", "Exit Price", "Execution Time", "Exit Time", "Status", "PNL (%)"]], use_container_width=True, hide_index=True)
+    else: 
+        st.info("No intraday actions executed yet today.")
     st.divider()
 
     st.markdown("### 📈 Weekly Performance Curve")
