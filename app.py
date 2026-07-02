@@ -89,14 +89,13 @@ def load_active_portfolio(timeframe):
 def load_daily_pnl(timeframe):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
+        # 🚀 THE FIX: Calculate true settled PNL sum for the current day without timezone over-engineering.
         query = f"""
-            SELECT COALESCE(ROUND(AVG(((s.latest_close - g.entry_price) / g.entry_price) * 100)::numeric, 2), 0.00) as pnl_ratio
-            FROM gold_signal_ledger g 
-            JOIN gold_screener_latest s ON g.ticker = s.ticker
-            WHERE g.target_timeframe = '{timeframe}' 
-              AND (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') >= (DATE_TRUNC('day', NOW() AT TIME ZONE 'Asia/Kolkata'))
-              AND (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') <  (DATE_TRUNC('day', NOW() AT TIME ZONE 'Asia/Kolkata') + INTERVAL '1 day')
-              AND g.verdict = 'PENDING';
+            SELECT COALESCE(ROUND(SUM(pnl_percentage)::numeric, 2), 0.00) as pnl_ratio
+            FROM gold_signal_ledger 
+            WHERE target_timeframe = '{timeframe}' 
+              AND DATE(signal_date) = CURRENT_DATE
+              AND verdict != 'PENDING';
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
@@ -110,6 +109,7 @@ def load_daily_pnl(timeframe):
 def load_daily_executions(timeframe):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
+        # 🚀 THE FIX: Unified date matching to prevent cross-timezone bleeding.
         query = f"""
             WITH today_activity AS (
                 SELECT DISTINCT ON (g.ticker)
@@ -122,8 +122,7 @@ def load_daily_executions(timeframe):
                     g.verdict AS "Status", g.pnl_percentage
                 FROM gold_signal_ledger g
                 WHERE g.target_timeframe = '{timeframe}' 
-                  AND (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') >= (DATE_TRUNC('day', NOW() AT TIME ZONE 'Asia/Kolkata'))
-                  AND (g.signal_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') <  (DATE_TRUNC('day', NOW() AT TIME ZONE 'Asia/Kolkata') + INTERVAL '1 day')
+                  AND DATE(g.signal_date) = CURRENT_DATE
                 ORDER BY g.ticker, g.signal_date DESC
             )
             SELECT "Ticker", "Action", "Execution Price", "Exit Price", "Execution Time", "Exit Time", "Status", COALESCE(ROUND(pnl_percentage::numeric, 2), ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2), 0.00) AS "PNL (%)"
@@ -458,7 +457,7 @@ with tab1:
     st.dataframe(df[df['ticker'].str.contains(search_query, na=False)] if search_query else df[['ticker', 'latest_close', 'stochrsi_15m', 'smart_money_daily', 'trend_15m']], use_container_width=True, height=400)
 
 # ------------------------------------------
-# TAB 2: THE X-RAY SANDBOX
+# TAB 2: THE X-RAY Sandbox
 # ------------------------------------------
 with tab2:
     st.subheader("🔬 Institutional Indicator X-Ray")
@@ -487,7 +486,7 @@ with tab2:
             fig.update_layout(height=1200, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, margin=dict(l=0, r=90, t=30, b=0), dragmode='pan', xaxis_rangeslider_visible=False)
             fig.update_xaxes(type='category', nticks=12, tickangle=-45, categoryorder='array', categoryarray=chart_df['display_time'])
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom':False, 'displayModeBar': False})
-    else: st.warning("Historical data is still warming up for this asset.")
+        else: st.warning("Historical data is still warming up for this asset.")
 
 # ------------------------------------------
 # TAB 3: INTRADAY LEDGER (15m)
