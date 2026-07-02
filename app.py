@@ -149,14 +149,21 @@ def load_daily_executions(timeframe):
 def load_period_performance(timeframe, days):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        # 🛡️ TIME FIX: Removed double-cast timezone shifting
+        
+        # 🛡️ THE FIX: Apply the Strict Intraday Filter to the historical chart
+        # If the timeframe is 15m, strictly only plot INTRADAY buys. 
+        strict_filter = "AND signal_type ~* 'INTRADAY'" if timeframe == '15m' else ""
+        
+        # 🚀 THE FIX: Dynamically calculate missing PNLs using settlement_price
         query = f"""
-            SELECT DATE(signal_date) as "Date", SUM(COALESCE(pnl_percentage, 0)) as "Daily PNL (%)"
+            SELECT DATE(signal_date) as "Date", 
+                   SUM(COALESCE(pnl_percentage, ROUND(((settlement_price - entry_price) / entry_price * 100)::numeric, 2), 0.00)) as "Daily PNL (%)"
             FROM gold_signal_ledger 
             WHERE target_timeframe = '{timeframe}' 
               AND signal_date >= NOW() - INTERVAL '{days} days' 
               AND verdict != 'PENDING' 
               AND signal_type !~* 'SELL' 
+              {strict_filter}
             GROUP BY "Date" 
             ORDER BY "Date" ASC;
         """
