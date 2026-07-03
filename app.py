@@ -120,7 +120,6 @@ def load_daily_pnl(timeframe):
 def load_daily_executions(timeframe):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        # 🛡️ TIME FIX: Removed the AT TIME ZONE 'UTC' double-cast because DB is now natively IST
         query = f"""
             WITH today_activity AS (
                 SELECT DISTINCT ON (g.ticker)
@@ -136,7 +135,8 @@ def load_daily_executions(timeframe):
                   AND DATE(g.signal_date) = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
                 ORDER BY g.ticker, g.signal_date DESC
             )
-            SELECT "Ticker", "Action", "Execution Price", "Exit Price", "Execution Time", "Exit Time", "Status", COALESCE(ROUND(pnl_percentage::numeric, 2), ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2), 0.00) AS "PNL (%)"
+            SELECT "Ticker", "Action", "Execution Price", "Exit Price", "Execution Time", "Exit Time", "Status", 
+            COALESCE(NULLIF(ROUND(pnl_percentage::numeric, 2), 0.00), ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2), 0.00) AS "PNL (%)"
             FROM today_activity;
         """
         df = pd.read_sql_query(query, conn)
@@ -150,14 +150,12 @@ def load_period_performance(timeframe, days):
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
         
-        # 🛡️ THE FIX: Apply the Strict Intraday Filter to the historical chart
-        # If the timeframe is 15m, strictly only plot INTRADAY buys. 
         strict_filter = "AND signal_type ~* 'INTRADAY'" if timeframe == '15m' else ""
         
-        # 🚀 THE FIX: Dynamically calculate missing PNLs using settlement_price
+        # 🚀 THE FIX: NULLIF(pnl_percentage, 0) forces PostgreSQL to calculate the fallback if a 0.00 was recorded
         query = f"""
             SELECT DATE(signal_date) as "Date", 
-                   SUM(COALESCE(pnl_percentage, ROUND(((settlement_price - entry_price) / entry_price * 100)::numeric, 2), 0.00)) as "Daily PNL (%)"
+                   SUM(COALESCE(NULLIF(pnl_percentage, 0), ROUND(((settlement_price - entry_price) / entry_price * 100)::numeric, 2), 0.00)) as "Daily PNL (%)"
             FROM gold_signal_ledger 
             WHERE target_timeframe = '{timeframe}' 
               AND signal_date >= NOW() - INTERVAL '{days} days' 
@@ -521,23 +519,21 @@ with tab3:
     
     # --- 🧹 DATA CLEANING: Strict Intraday & Phantom Signal Filter ---
     if not df_intra_today.empty:
-        # Rule A: Strictly keep only Intraday-related algorithm actions
         df_intra_today = df_intra_today[df_intra_today['Action'].str.contains('INTRADAY|HARVEST|SQUAREOFF', case=False, na=False)]
-        
-        # Rule B: Erase "Phantom Sells" (missing Execution Price)
         df_intra_today = df_intra_today.dropna(subset=['Execution Price'])
 
-    # --- 🚀 NEW: Dynamic Settled PNL & Profit Calculation ---
+    # --- 🚀 NEW: PURE PANDAS PNL CALCULATION (Bypass DB Corruption) ---
     intra_pnl_today = 0.00
     profit_taken_1qty = 0.00
     
     if not df_intra_today.empty:
-        # Isolate trades that are fully settled (must have an Exit Price)
-        settled_df = df_intra_today.dropna(subset=['Exit Price'])
+        settled_df = df_intra_today.dropna(subset=['Exit Price']).copy()
         
         if not settled_df.empty:
-            # 1. Sum the accurate PNL percentages
-            intra_pnl_today = settled_df['PNL (%)'].astype(float).sum()
+            # 1. Force the true math: (Exit - Entry) / Entry * 100
+            settled_df['True PNL'] = ((settled_df['Exit Price'].astype(float) - settled_df['Execution Price'].astype(float)) / settled_df['Execution Price'].astype(float)) * 100
+            intra_pnl_today = settled_df['True PNL'].sum()
+            
             # 2. Sum the raw point capture
             profit_taken_1qty = (settled_df['Exit Price'].astype(float) - settled_df['Execution Price'].astype(float)).sum()
 
@@ -552,6 +548,8 @@ with tab3:
     c4.metric("Avg Unrealized PNL", f"{intra_avg_pnl:.2f}%", delta="Profitable" if intra_avg_pnl > 0 else "Drawdown", delta_color="normal" if intra_avg_pnl > 0 else "inverse")
     c5.metric("💸 Profit Taken (1 Qty)", f"₹{profit_taken_1qty:.2f}", help="Total pure points captured today, assuming exactly 1 share bought/sold per trade.")
     st.divider()
+    
+    # ... (Keep the rest of your Tab 3 code exactly as it is) ...
     
     st.markdown("### 📡 Live Signal Radar")
     df_live_signals = load_live_intraday_signals()
