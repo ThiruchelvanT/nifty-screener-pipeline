@@ -152,18 +152,35 @@ def load_period_performance(timeframe, days):
         
         strict_filter = "AND signal_type ~* 'INTRADAY'" if timeframe == '15m' else ""
         
-        # 🚀 THE FIX: NULLIF(pnl_percentage, 0) forces PostgreSQL to calculate the fallback if a 0.00 was recorded
+        # 🚀 THE FIX: Pair the Buy row with its Sell Receipt directly inside SQL to bypass the zero-corruption
         query = f"""
-            SELECT DATE(signal_date) as "Date", 
-                   SUM(COALESCE(NULLIF(pnl_percentage, 0), ROUND(((settlement_price - entry_price) / entry_price * 100)::numeric, 2), 0.00)) as "Daily PNL (%)"
-            FROM gold_signal_ledger 
-            WHERE target_timeframe = '{timeframe}' 
-              AND signal_date >= NOW() - INTERVAL '{days} days' 
-              AND verdict != 'PENDING' 
-              AND signal_type !~* 'SELL' 
-              {strict_filter}
-            GROUP BY "Date" 
-            ORDER BY "Date" ASC;
+            WITH paired_trades AS (
+                SELECT 
+                    DATE(b.signal_date) as trade_date,
+                    COALESCE(
+                        NULLIF(b.pnl_percentage, 0),
+                        ROUND(((b.settlement_price - b.entry_price) / b.entry_price * 100)::numeric, 2),
+                        (SELECT ROUND(((s.entry_price - b.entry_price) / b.entry_price * 100)::numeric, 2) 
+                         FROM gold_signal_ledger s 
+                         WHERE s.ticker = b.ticker 
+                           AND s.target_timeframe = b.target_timeframe 
+                           AND s.signal_type ~* 'SELL' 
+                           AND s.signal_date >= b.signal_date 
+                         ORDER BY s.signal_date ASC LIMIT 1),
+                        0.00
+                    ) as true_pnl
+                FROM gold_signal_ledger b
+                WHERE b.target_timeframe = '{timeframe}' 
+                  AND b.signal_date >= NOW() - INTERVAL '{days} days' 
+                  AND b.verdict != 'PENDING' 
+                  AND b.signal_type !~* 'SELL' 
+                  {strict_filter}
+            )
+            SELECT trade_date as "Date", 
+                   COALESCE(ROUND(SUM(true_pnl)::numeric, 2), 0.00) as "Daily PNL (%)"
+            FROM paired_trades
+            GROUP BY trade_date
+            ORDER BY trade_date ASC;
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
