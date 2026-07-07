@@ -297,6 +297,7 @@ def load_live_intraday_signals():
     try:
         conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
         
+        # 🚀 THE FIX: UI now mirrors the exact AWS Lambda VWAP & 100-Point Logic
         query = """
             WITH latest_1d AS (
                 SELECT ticker, nvi_black, nvi_red, rsi_14, macd_black, macd_red, rsi_2 
@@ -306,18 +307,30 @@ def load_live_intraday_signals():
                 WHERE rn = 1
             ),
             latest_15m AS (
-                SELECT ticker, close, rsi_2, rsi_14, stochrsi_k, stochrsi_d, macd_black, macd_red 
+                SELECT ticker, close, rsi_2, rsi_14, stochrsi_k, stochrsi_d, macd_black, macd_red, vwap 
                 FROM (SELECT *, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn 
                       FROM silver_technical_indicators
                       WHERE datetime >= CURRENT_DATE - INTERVAL '2 days') sub 
                 WHERE rn = 1
             ),
             scored_stocks AS (
-                SELECT m.ticker, m.close, (CASE WHEN d.nvi_black > d.nvi_red THEN 20 ELSE 0 END + CASE WHEN m.macd_black > m.macd_red THEN 25 ELSE 0 END + CASE WHEN m.rsi_14 > 45 THEN 25 ELSE 0 END + CASE WHEN m.rsi_2 < 5 AND m.stochrsi_k < 10 AND m.stochrsi_d < 10 THEN 30 ELSE 0 END) AS buy_intraday_score 
+                SELECT 
+                    m.ticker, 
+                    m.close, 
+                    (CASE WHEN d.nvi_black > d.nvi_red THEN 10 ELSE 0 END + 
+                     CASE WHEN m.macd_black > m.macd_red THEN 20 ELSE 0 END + 
+                     CASE WHEN m.rsi_14 > 45 THEN 20 ELSE 0 END + 
+                     CASE WHEN m.rsi_2 < 5 AND m.stochrsi_k < 10 THEN 20 ELSE 0 END + 
+                     CASE WHEN m.close > m.vwap THEN 30 ELSE 0 END) AS buy_intraday_score 
                 FROM latest_15m m JOIN latest_1d d ON m.ticker = d.ticker
             )
-            SELECT s.ticker AS "Stock", ROUND(s.close::numeric, 2) AS "Current Price", s.buy_intraday_score AS "Intraday Score", 
-            CASE WHEN l.ticker IS NOT NULL THEN '🟢 BOUGHT (Active)' WHEN s.buy_intraday_score >= 85 THEN '⚡ BUY TRIGGERED (Locking)' WHEN s.buy_intraday_score >= 70 THEN '🔥 HEATING UP' ELSE '⏳ WAITING' END AS "Signal Status"
+            SELECT s.ticker AS "Stock", ROUND(s.close::numeric, 2) AS "Current Price", s.buy_intraday_score AS "Raw Intraday Score", 
+            CASE 
+                WHEN l.ticker IS NOT NULL THEN '🟢 BOUGHT (Active)' 
+                WHEN s.buy_intraday_score >= 80 THEN '⚡ LOCK (Pending Macro Check)' 
+                WHEN s.buy_intraday_score >= 70 THEN '🔥 HEATING UP' 
+                ELSE '⏳ WAITING' 
+            END AS "Signal Status"
             FROM scored_stocks s LEFT JOIN gold_signal_ledger l ON s.ticker = l.ticker AND l.verdict = 'PENDING' AND l.target_timeframe = '15m' 
             WHERE s.buy_intraday_score >= 50 
             ORDER BY s.buy_intraday_score DESC LIMIT 15;
