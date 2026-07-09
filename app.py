@@ -69,14 +69,19 @@ def load_active_portfolio(timeframe):
                 TO_CHAR(g.first_entry_date, 'Mon DD, YYYY - HH12:MI AM') AS "Entry Time",
                 ROUND(g.avg_entry_price::numeric, 2) AS "Avg Entry Price",
                 ROUND(s.latest_close::numeric, 2) AS "Current Price",
-                ROUND( (((s.latest_close - g.avg_entry_price) / g.avg_entry_price) * 100)::numeric, 2 ) AS "Unrealized PNL (%)"
+                -- 🚀 FIX: Removed the '%' from the SQL alias
+                ROUND( (((s.latest_close - g.avg_entry_price) / g.avg_entry_price) * 100)::numeric, 2 ) AS "Unrealized_PNL"
             FROM aggregated_ledger g
             JOIN gold_screener_latest s ON g.ticker = s.ticker
             ORDER BY ((s.latest_close - g.avg_entry_price) / g.avg_entry_price) DESC;
         """
-        return conn.query(query)
+        df = conn.query(query)
+        # 🚀 FIX: Add the '%' back via Pandas to bypass the DB choke point
+        if not df.empty:
+            df = df.rename(columns={"Unrealized_PNL": "Unrealized PNL (%)"})
+        return df
     except Exception as e:
-        st.warning(f"Portfolio Load Error: {e}")
+        st.error(f"Portfolio Load Error: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=60)
@@ -97,12 +102,18 @@ def load_daily_executions(timeframe):
                   AND DATE(g.signal_date) = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
                 ORDER BY g.ticker, g.signal_date DESC
             )
+            -- 🚀 FIX: Removed the '%' from the SQL alias
             SELECT "Ticker", "Action", "Execution Price", "Exit Price", "Execution Time", "Exit Time", "Status", 
-            COALESCE(NULLIF(ROUND(pnl_percentage::numeric, 2), 0.00), ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2), 0.00) AS "PNL (%)"
+            COALESCE(NULLIF(ROUND(pnl_percentage::numeric, 2), 0.00), ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2), 0.00) AS "PNL_Pct"
             FROM today_activity;
         """
-        return conn.query(query)
-    except Exception: return pd.DataFrame()
+        df = conn.query(query)
+        if not df.empty:
+            df = df.rename(columns={"PNL_Pct": "PNL (%)"})
+        return df
+    except Exception as e:
+        st.error(f"Executions Load Error: {e}")
+        return pd.DataFrame()
 
 @st.cache_data(ttl=300)
 def load_period_performance(timeframe, days):
@@ -127,11 +138,17 @@ def load_period_performance(timeframe, days):
                   AND b.signal_date >= NOW() - INTERVAL '{days} days' 
                   AND b.verdict != 'PENDING' AND b.signal_type !~* 'SELL' {strict_filter}
             )
-            SELECT trade_date as "Date", COALESCE(ROUND(SUM(true_pnl)::numeric, 2), 0.00) as "Daily PNL (%)"
+            -- 🚀 FIX: Removed the '%' from the SQL alias
+            SELECT trade_date as "Date", COALESCE(ROUND(SUM(true_pnl)::numeric, 2), 0.00) as "Daily_PNL"
             FROM paired_trades GROUP BY trade_date ORDER BY trade_date ASC;
         """
-        return conn.query(query)
-    except Exception: return pd.DataFrame()
+        df = conn.query(query)
+        if not df.empty:
+            df = df.rename(columns={"Daily_PNL": "Daily PNL (%)"})
+        return df
+    except Exception as e:
+        st.error(f"Performance Graph Error: {e}")
+        return pd.DataFrame()
 
 @st.cache_data(ttl=60)
 def fetch_macro_trade_lifecycle(timeframe, days):
