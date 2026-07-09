@@ -15,6 +15,8 @@ import pytz
 # ==========================================
 st.set_page_config(page_title="The Oracle: Global Intelligence", page_icon="⚖️", layout="wide")
 
+conn = st.connection("neon", type="sql", url=st.secrets["DATABASE_URL"])
+
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
@@ -35,14 +37,11 @@ def load_market_breadth():
     except Exception: return pd.DataFrame()
 
 @st.cache_data(ttl=900)
-def load_ledger_scoreboard():
+def load_market_breadth():
     try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        query = "SELECT COUNT(*) as total_signals, SUM(CASE WHEN verdict = 'WIN' THEN 1 ELSE 0 END) as total_wins, ROUND(AVG(pnl_percentage), 2) as average_return FROM gold_signal_ledger WHERE verdict != 'PENDING';"
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
-    except Exception: return pd.DataFrame()
+        return conn.query("SELECT * FROM gold_market_breadth")
+    except Exception: 
+        return pd.DataFrame()
 
 @st.cache_data(ttl=60)
 def load_active_portfolio(timeframe):
