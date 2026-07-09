@@ -11,10 +11,11 @@ import datetime
 import pytz
 
 # ==========================================
-# 1. PAGE CONFIGURATION & STYLING
+# 1. PAGE CONFIGURATION & CONNECTION POOL
 # ==========================================
 st.set_page_config(page_title="The Oracle: Global Intelligence", page_icon="⚖️", layout="wide")
 
+# 🚀 THE GLOBAL CONNECTION POOL (Saves the database from crashing)
 conn = st.connection("neon", type="sql", url=st.secrets["DATABASE_URL"])
 
 st.markdown("""
@@ -25,17 +26,8 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. DATA LOADERS (100% Native Psycopg2)
+# 2. DATA LOADERS (100% Vectorized Pool)
 # ==========================================
-@st.cache_data(ttl=900)
-def load_market_breadth():
-    try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        df = pd.read_sql_query("SELECT * FROM gold_market_breadth", conn)
-        conn.close()
-        return df
-    except Exception: return pd.DataFrame()
-
 @st.cache_data(ttl=900)
 def load_market_breadth():
     try:
@@ -43,18 +35,23 @@ def load_market_breadth():
     except Exception: 
         return pd.DataFrame()
 
+@st.cache_data(ttl=900)
+def load_ledger_scoreboard():
+    try:
+        return conn.query("SELECT COUNT(*) as total_signals, SUM(CASE WHEN verdict = 'WIN' THEN 1 ELSE 0 END) as total_wins, ROUND(AVG(pnl_percentage), 2) as average_return FROM gold_signal_ledger WHERE verdict != 'PENDING';")
+    except Exception as e:
+        # 🚀 Diagnostic output so we know EXACTLY why it fails
+        st.error(f"Ledger Scoreboard SQL Error: {e}") 
+        return pd.DataFrame()
+
 @st.cache_data(ttl=60)
 def load_active_portfolio(timeframe):
     try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
         query = f"""
             WITH aggregated_ledger AS (
                 SELECT 
-                    ticker,
-                    target_timeframe,
-                    MIN(signal_date) as first_entry_date,
-                    COUNT(signal_id) as total_signals,
-                    AVG(entry_price) as avg_entry_price,
+                    ticker, target_timeframe, MIN(signal_date) as first_entry_date,
+                    COUNT(signal_id) as total_signals, AVG(entry_price) as avg_entry_price,
                     SUM(COALESCE(allocated_capital, 0)) as total_invested
                 FROM gold_signal_ledger
                 WHERE verdict = 'PENDING' AND target_timeframe = '{timeframe}'
@@ -77,48 +74,14 @@ def load_active_portfolio(timeframe):
             JOIN gold_screener_latest s ON g.ticker = s.ticker
             ORDER BY ((s.latest_close - g.avg_entry_price) / g.avg_entry_price) DESC;
         """
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
+        return conn.query(query)
     except Exception as e:
         st.warning(f"Portfolio Load Error: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=60)
-def load_daily_pnl(timeframe):
-    try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        
-        # 🚀 THE FIX: We wrap the dynamic CSV logic in a CTE, then SUM the true calculated PNL.
-        query = f"""
-            WITH today_activity AS (
-                SELECT DISTINCT ON (g.ticker)
-                    COALESCE(CASE WHEN g.signal_type !~* 'SELL' THEN ROUND(g.entry_price::numeric, 2) ELSE NULL END, (SELECT ROUND(entry_price::numeric, 2) FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1)) AS "Execution Price",
-                    COALESCE(CASE WHEN g.signal_type ~* 'SELL' THEN ROUND(g.entry_price::numeric, 2) ELSE NULL END, (SELECT ROUND(entry_price::numeric, 2) FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1)) AS "Exit Price",
-                    g.pnl_percentage
-                FROM gold_signal_ledger g
-                WHERE g.target_timeframe = '{timeframe}' 
-                  AND DATE(g.signal_date) = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
-                ORDER BY g.ticker, g.signal_date DESC
-            )
-            SELECT COALESCE(ROUND(SUM(
-                COALESCE(pnl_percentage::numeric, ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2), 0.00)
-            ), 2), 0.00) AS pnl_ratio
-            FROM today_activity
-            WHERE "Exit Price" IS NOT NULL;
-        """
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        if not df.empty and pd.notna(df.iloc[0]['pnl_ratio']): return float(df.iloc[0]['pnl_ratio'])
-        return 0.0
-    except Exception as e:
-        st.warning(f"Daily PNL Load Error: {e}")
-        return 0.0
-
-@st.cache_data(ttl=60)
 def load_daily_executions(timeframe):
     try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
         query = f"""
             WITH today_activity AS (
                 SELECT DISTINCT ON (g.ticker)
@@ -138,20 +101,13 @@ def load_daily_executions(timeframe):
             COALESCE(NULLIF(ROUND(pnl_percentage::numeric, 2), 0.00), ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2), 0.00) AS "PNL (%)"
             FROM today_activity;
         """
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
-    except Exception as e:
-        return pd.DataFrame()
+        return conn.query(query)
+    except Exception: return pd.DataFrame()
 
 @st.cache_data(ttl=300)
 def load_period_performance(timeframe, days):
     try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        
         strict_filter = "AND signal_type ~* 'INTRADAY'" if timeframe == '15m' else ""
-        
-        # 🚀 THE FIX: Pair the Buy row with its Sell Receipt directly inside SQL to bypass the zero-corruption
         query = f"""
             WITH paired_trades AS (
                 SELECT 
@@ -161,161 +117,107 @@ def load_period_performance(timeframe, days):
                         ROUND(((b.settlement_price - b.entry_price) / b.entry_price * 100)::numeric, 2),
                         (SELECT ROUND(((s.entry_price - b.entry_price) / b.entry_price * 100)::numeric, 2) 
                          FROM gold_signal_ledger s 
-                         WHERE s.ticker = b.ticker 
-                           AND s.target_timeframe = b.target_timeframe 
-                           AND s.signal_type ~* 'SELL' 
-                           AND s.signal_date >= b.signal_date 
+                         WHERE s.ticker = b.ticker AND s.target_timeframe = b.target_timeframe 
+                           AND s.signal_type ~* 'SELL' AND s.signal_date >= b.signal_date 
                          ORDER BY s.signal_date ASC LIMIT 1),
                         0.00
                     ) as true_pnl
                 FROM gold_signal_ledger b
                 WHERE b.target_timeframe = '{timeframe}' 
                   AND b.signal_date >= NOW() - INTERVAL '{days} days' 
-                  AND b.verdict != 'PENDING' 
-                  AND b.signal_type !~* 'SELL' 
-                  {strict_filter}
+                  AND b.verdict != 'PENDING' AND b.signal_type !~* 'SELL' {strict_filter}
             )
-            SELECT trade_date as "Date", 
-                   COALESCE(ROUND(SUM(true_pnl)::numeric, 2), 0.00) as "Daily PNL (%)"
-            FROM paired_trades
-            GROUP BY trade_date
-            ORDER BY trade_date ASC;
+            SELECT trade_date as "Date", COALESCE(ROUND(SUM(true_pnl)::numeric, 2), 0.00) as "Daily PNL (%)"
+            FROM paired_trades GROUP BY trade_date ORDER BY trade_date ASC;
         """
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
-    except Exception as e:
-        return pd.DataFrame()
+        return conn.query(query)
+    except Exception: return pd.DataFrame()
 
 @st.cache_data(ttl=60)
 def fetch_macro_trade_lifecycle(timeframe, days):
     try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
         query = f"""
             SELECT 
-                ticker AS "Ticker", 
-                TO_CHAR(signal_date, 'Mon DD - HH12:MI AM') AS "Buy Time", 
+                ticker AS "Ticker", TO_CHAR(signal_date, 'Mon DD - HH12:MI AM') AS "Buy Time", 
                 ROUND(entry_price::numeric, 2) AS "Buy Price",
                 COALESCE(TO_CHAR(settlement_date, 'Mon DD - HH12:MI AM'), CASE WHEN verdict != 'PENDING' THEN 'Closed' ELSE 'Active' END) AS "Sold Time",
                 ROUND(settlement_price::numeric, 2) AS "Sold Price",
-                COALESCE(ROUND(pnl_percentage::numeric, 2), 0.00) AS "Net Return", 
-                verdict AS "Status"
+                COALESCE(ROUND(pnl_percentage::numeric, 2), 0.00) AS "Net Return", verdict AS "Status"
             FROM gold_signal_ledger
-            WHERE target_timeframe = '{timeframe}' 
-              AND signal_date >= NOW() - INTERVAL '{days} days' 
-              AND signal_type !~* 'SELL' 
+            WHERE target_timeframe = '{timeframe}' AND signal_date >= NOW() - INTERVAL '{days} days' AND signal_type !~* 'SELL' 
             ORDER BY signal_date DESC;
         """
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
-    except Exception as e:
-        return pd.DataFrame()
-
-@st.cache_data(ttl=60)
-def load_historical_pnl(timeframe, days):
-    try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        query = f"SELECT COALESCE(ROUND(SUM(pnl_percentage)::numeric, 2), 0.00) as total_pnl FROM gold_signal_ledger WHERE target_timeframe = '{timeframe}' AND signal_date >= NOW() - INTERVAL '{days} days' AND verdict != 'PENDING';"
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        if not df.empty and pd.notna(df.iloc[0]['total_pnl']): return float(df.iloc[0]['total_pnl'])
-        return 0.0
-    except Exception as e:
-        return 0.0
+        return conn.query(query)
+    except Exception: return pd.DataFrame()
 
 @st.cache_data(ttl=900) 
 def load_gold_data():
     try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        df = pd.read_sql_query("SELECT ticker, latest_close, stochrsi_15m, trend_15m, smart_money_daily FROM gold_screener_latest;", conn)
-        time_df = pd.read_sql_query("SELECT MAX(datetime) as true_market_time FROM silver_technical_indicators;", conn)
-        conn.close() 
+        df = conn.query("SELECT ticker, latest_close, stochrsi_15m, trend_15m, smart_money_daily FROM gold_screener_latest;")
+        time_df = conn.query("SELECT MAX(datetime) as true_market_time FROM silver_technical_indicators;")
+        
         if df.empty: return None, None
         
         latest_date = time_df['true_market_time'].iloc[0]
         if pd.notna(latest_date):
             ts = pd.to_datetime(latest_date)
-            
-            if ts.tz is None: 
-                ts_ist = ts.tz_localize('Asia/Kolkata')
-            else:
-                ts_ist = ts.tz_convert('Asia/Kolkata')
-                
+            ts_ist = ts.tz_localize('Asia/Kolkata') if ts.tz is None else ts.tz_convert('Asia/Kolkata')
             return df, ts_ist
         return df, None
-    except Exception as e:
-        return None, None
+    except Exception: return None, None
 
 @st.cache_data(ttl=900)
 def load_silver_history(ticker, timeframe):
     try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
         if timeframe == '1d':
             query = f"SELECT DISTINCT ON (b.datetime::date) b.datetime, b.open, b.high, b.low, b.close, s.macd_black, s.macd_red, s.rsi_2, s.stochrsi_k, s.stochrsi_d, s.rsi_14, s.nvi_black, s.nvi_red FROM bronze_raw_ohlcv b LEFT JOIN silver_1d_macro s ON b.ticker = s.ticker AND b.datetime::date = s.datetime::date WHERE b.ticker = '{ticker}' AND b.timeframe = '1d' ORDER BY b.datetime::date DESC, b.datetime DESC LIMIT 300;"
         else:
             query = f"SELECT DISTINCT ON (b.datetime) b.datetime, b.open, b.high, b.low, b.close, s.macd_black, s.macd_red, s.rsi_2, s.stochrsi_k, s.stochrsi_d, s.rsi_14, NULL as nvi_black, NULL as nvi_red FROM bronze_raw_ohlcv b LEFT JOIN silver_technical_indicators s ON b.ticker = s.ticker AND b.datetime::timestamp = s.datetime::timestamp AND s.timeframe = '15m' WHERE b.ticker = '{ticker}' AND b.timeframe = '15m' ORDER BY b.datetime DESC LIMIT 300;"
-        df = pd.read_sql_query(query, conn)
-        conn.close()
+        
+        df = conn.query(query)
         if df.empty: return df
         df['datetime'] = pd.to_datetime(df['datetime'])
         if df['datetime'].dt.tz is not None: df['datetime'] = df['datetime'].dt.tz_localize(None) 
         return df.sort_values(by="datetime", ascending=True)
-    except Exception as e:
-        return pd.DataFrame()
+    except Exception: return pd.DataFrame()
 
 @st.cache_data(ttl=60) 
 def load_etf_sniper_radar():
     try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
         query = """
             SELECT DISTINCT ON (ticker) 
-                ticker AS "ETF Ticker", 
-                TO_CHAR(signal_date, 'Mon DD, YYYY - HH12:MI AM') AS "Time Locked", 
-                signal_date, 
-                signal_type AS "Signal Type", 
-                entry_price AS "Entry Price", 
-                target_timeframe AS "Timeframe", 
-                verdict AS "Status" 
+                ticker AS "ETF Ticker", TO_CHAR(signal_date, 'Mon DD, YYYY - HH12:MI AM') AS "Time Locked", 
+                signal_date, signal_type AS "Signal Type", entry_price AS "Entry Price", 
+                target_timeframe AS "Timeframe", verdict AS "Status" 
             FROM gold_signal_ledger 
             WHERE ticker IN ('SILVERBEES.NS', 'GOLDBEES.NS', 'NIFTYBEES.NS', 'BANKBEES.NS', 'ITBEES.NS', 'LIQUIDBEES.NS')
-              AND signal_date >= NOW() - INTERVAL '30 days'
-            ORDER BY ticker, signal_date DESC;
+              AND signal_date >= NOW() - INTERVAL '30 days' ORDER BY ticker, signal_date DESC;
         """
-        df = pd.read_sql_query(query, conn)
-        conn.close()
+        df = conn.query(query)
         if not df.empty:
-            df = df.sort_values(by="signal_date", ascending=False)
-            df = df.drop(columns=["signal_date"])
+            df = df.sort_values(by="signal_date", ascending=False).drop(columns=["signal_date"])
         return df
-    except Exception as e:
-        return pd.DataFrame()
+    except Exception: return pd.DataFrame()
 
 @st.cache_data(ttl=60)
 def load_live_intraday_signals():
     try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        
-        # 🚀 THE FIX: UI now mirrors the exact AWS Lambda VWAP & 100-Point Logic
         query = """
             WITH latest_1d AS (
                 SELECT ticker, nvi_black, nvi_red, rsi_14, macd_black, macd_red, rsi_2 
                 FROM (SELECT *, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn 
-                      FROM silver_1d_macro
-                      WHERE datetime >= CURRENT_DATE - INTERVAL '5 days') sub 
+                      FROM silver_1d_macro WHERE datetime >= CURRENT_DATE - INTERVAL '5 days') sub 
                 WHERE rn = 1
             ),
             latest_15m AS (
                 SELECT ticker, close, rsi_2, rsi_14, stochrsi_k, stochrsi_d, macd_black, macd_red, vwap 
                 FROM (SELECT *, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn 
-                      FROM silver_technical_indicators
-                      WHERE datetime >= CURRENT_DATE - INTERVAL '2 days') sub 
+                      FROM silver_technical_indicators WHERE datetime >= CURRENT_DATE - INTERVAL '2 days') sub 
                 WHERE rn = 1
             ),
             scored_stocks AS (
                 SELECT 
-                    m.ticker, 
-                    m.close, 
+                    m.ticker, m.close, 
                     (CASE WHEN d.nvi_black > d.nvi_red THEN 10 ELSE 0 END + 
                      CASE WHEN m.macd_black > m.macd_red THEN 20 ELSE 0 END + 
                      CASE WHEN m.rsi_14 > 45 THEN 20 ELSE 0 END + 
@@ -331,12 +233,9 @@ def load_live_intraday_signals():
                 ELSE '⏳ WAITING' 
             END AS "Signal Status"
             FROM scored_stocks s LEFT JOIN gold_signal_ledger l ON s.ticker = l.ticker AND l.verdict = 'PENDING' AND l.target_timeframe = '15m' 
-            WHERE s.buy_intraday_score >= 50 
-            ORDER BY s.buy_intraday_score DESC LIMIT 15;
+            WHERE s.buy_intraday_score >= 50 ORDER BY s.buy_intraday_score DESC LIMIT 15;
         """
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
+        return conn.query(query)
     except Exception: return pd.DataFrame()
 
 @st.cache_data(ttl=300)
@@ -378,8 +277,9 @@ data_result = load_gold_data()
 st.sidebar.divider()
 st.sidebar.subheader("🔀 Data Source Router")
 try:
-    conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-    cursor = conn.cursor()
+    # ⚠️ For the Sidebar DML (Updates), we must use a direct psycopg2 cursor, not the Streamlit read-only pool
+    pg_conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
+    cursor = pg_conn.cursor()
     cursor.execute("SELECT key_value FROM system_config WHERE key_name = 'ACTIVE_DATA_SOURCE';")
     res = cursor.fetchone()
     current_source = res[0] if res else "YAHOO"
@@ -393,14 +293,14 @@ try:
     if current_source == "FYERS" and not is_token_fresh:
         current_source = "YAHOO"
         cursor.execute("UPDATE system_config SET key_value = 'YAHOO', last_updated = NOW() WHERE key_name = 'ACTIVE_DATA_SOURCE';")
-        conn.commit()
+        pg_conn.commit()
         st.sidebar.warning("⚠️ Fyers Token expired. UI Auto-Reverted to YAHOO.")
 
     new_source = st.sidebar.radio("Active Pipeline Source:", ["YAHOO (Default / Free)", "FYERS (Requires Daily Token)"], index=0 if current_source == "YAHOO" else 1)
     if ("YAHOO" if "YAHOO" in new_source else "FYERS") != current_source:
         cursor.execute("INSERT INTO system_config (key_name, key_value, last_updated) VALUES ('ACTIVE_DATA_SOURCE', %s, NOW()) ON CONFLICT (key_name) DO UPDATE SET key_value = EXCLUDED.key_value, last_updated = NOW();", ("YAHOO" if "YAHOO" in new_source else "FYERS",))
-        conn.commit()
-    conn.close()
+        pg_conn.commit()
+    pg_conn.close()
 except Exception: pass
 
 st.sidebar.divider()
@@ -417,10 +317,10 @@ with st.sidebar.expander("Authenticate Broker"):
             response = session.generate_token()
             if "access_token" in response:
                 try:
-                    conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-                    conn.cursor().execute("INSERT INTO system_config (key_name, key_value, last_updated) VALUES ('FYERS_ACCESS_TOKEN', %s, NOW()) ON CONFLICT (key_name) DO UPDATE SET key_value = EXCLUDED.key_value, last_updated = NOW();", (response["access_token"],))
-                    conn.cursor().execute("INSERT INTO system_config (key_name, key_value, last_updated) VALUES ('ACTIVE_DATA_SOURCE', 'FYERS', NOW()) ON CONFLICT (key_name) DO UPDATE SET key_value = EXCLUDED.key_value, last_updated = NOW();")
-                    conn.commit(); conn.close(); st.success("✅ Handshake Successful!"); st.rerun()
+                    forge_conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
+                    forge_conn.cursor().execute("INSERT INTO system_config (key_name, key_value, last_updated) VALUES ('FYERS_ACCESS_TOKEN', %s, NOW()) ON CONFLICT (key_name) DO UPDATE SET key_value = EXCLUDED.key_value, last_updated = NOW();", (response["access_token"],))
+                    forge_conn.cursor().execute("INSERT INTO system_config (key_name, key_value, last_updated) VALUES ('ACTIVE_DATA_SOURCE', 'FYERS', NOW()) ON CONFLICT (key_name) DO UPDATE SET key_value = EXCLUDED.key_value, last_updated = NOW();")
+                    forge_conn.commit(); forge_conn.close(); st.success("✅ Handshake Successful!"); st.rerun()
                 except Exception as e: st.error(f"DB Error: {e}")
 
 st.sidebar.divider()
@@ -449,7 +349,6 @@ if data_result[1] is not None:
     ts_ist = data_result[1]
     last_refresh_str = ts_ist.strftime('%d %b %Y, %I:%M %p')
     
-    # Calculate the exact next 15-minute interval
     minutes = ts_ist.minute
     next_min = ((minutes // 15) + 1) * 15
     
@@ -458,7 +357,6 @@ if data_result[1] is not None:
     else:
         valid_till_ts = ts_ist.replace(minute=next_min, second=0, microsecond=0)
         
-    # Check if the market is closed for the day (After 3:30 PM)
     if valid_till_ts.hour > 15 or (valid_till_ts.hour == 15 and valid_till_ts.minute >= 30):
         valid_till_str = "Next Trading Day 09:15 AM"
     else:
@@ -467,14 +365,12 @@ else:
     last_refresh_str = "Awaiting Data"
     valid_till_str = "Awaiting Data"
 
-# Inject Custom CSS to float the box in the top right corner
 st.markdown(f"""
     <div style="position: absolute; top: -45px; right: 0px; text-align: right; font-size: 13px; color: #a0a0a0; background-color: #161b22; padding: 8px 15px; border-radius: 8px; border: 1px solid #30363d; z-index: 100; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
         <span style="color:#E0E0E0;">🔄 <b>Last Refresh:</b></span> {last_refresh_str}<br>
         <span style="color:#26A69A;">⏳ <b>Valid Till:</b></span> {valid_till_str}
     </div>
 """, unsafe_allow_html=True)
-# ----------------------------
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 The Screener", "📈 The X-Ray Sandbox", "⚡ Intraday Ledger", "🏛️ Macro Ledger", "🎯 ETF Sniper Radar"])
 
@@ -485,10 +381,11 @@ with tab1:
     st.subheader("🏆 The Oracle's True Win Rate")
     try:
         ledger_df = load_ledger_scoreboard()
-        if not ledger_df.empty and ledger_df['total_signals'].iloc[0] > 0:
+        if ledger_df is not None and not ledger_df.empty and ledger_df['total_signals'].iloc[0] > 0:
             st.metric(label=f"System Accuracy ({ledger_df['total_signals'].iloc[0]} Settled Trades)", value=f"{(ledger_df['total_wins'].iloc[0] / ledger_df['total_signals'].iloc[0]) * 100:.1f}%", delta=f"Avg Return: {ledger_df['average_return'].iloc[0]}%")
         else: st.info("📊 Forward-Testing Engine Active. Awaiting first settlements...")
-    except Exception: st.warning("Ledger Database Offline.")
+    except Exception as e: 
+        st.warning(f"Ledger Database Offline. Error: {e}")
     
     st.divider()
     signal_type = st.radio("⚔️ **SIGNAL SELECTION:**", ["BUY (The Rebound)", "SELL (The Collapse)"], horizontal=True)
@@ -543,15 +440,12 @@ with tab2:
 with tab3:
     st.subheader("⚡ Intraday Sniper Operations")
     
-    # 1. Load Raw Data
     df_intra_today = load_daily_executions('15m')
     
-    # --- 🧹 DATA CLEANING: Strict Intraday & Phantom Signal Filter ---
     if not df_intra_today.empty:
         df_intra_today = df_intra_today[df_intra_today['Action'].str.contains('INTRADAY|HARVEST|SQUAREOFF', case=False, na=False)]
         df_intra_today = df_intra_today.dropna(subset=['Execution Price'])
 
-    # --- 🚀 NEW: PURE PANDAS PNL CALCULATION (Bypass DB Corruption) ---
     intra_pnl_today = 0.00
     profit_taken_1qty = 0.00
     
@@ -559,17 +453,13 @@ with tab3:
         settled_df = df_intra_today.dropna(subset=['Exit Price']).copy()
         
         if not settled_df.empty:
-            # 1. Force the true math: (Exit - Entry) / Entry * 100
             settled_df['True PNL'] = ((settled_df['Exit Price'].astype(float) - settled_df['Execution Price'].astype(float)) / settled_df['Execution Price'].astype(float)) * 100
             intra_pnl_today = settled_df['True PNL'].sum()
-            
-            # 2. Sum the raw point capture
             profit_taken_1qty = (settled_df['Exit Price'].astype(float) - settled_df['Execution Price'].astype(float)).sum()
 
     df_intra_portfolio = load_active_portfolio('15m')
     intra_avg_pnl = df_intra_portfolio["Unrealized PNL (%)"].mean() if not df_intra_portfolio.empty else 0.00
 
-    # --- UI LAYOUT: Expanded to 5 columns ---
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Today's Executions", len(df_intra_today))
     c2.metric("Today's Settled PNL", f"{intra_pnl_today:.2f}%", delta=f"{intra_pnl_today:.2f}%")
@@ -577,8 +467,6 @@ with tab3:
     c4.metric("Avg Unrealized PNL", f"{intra_avg_pnl:.2f}%", delta="Profitable" if intra_avg_pnl > 0 else "Drawdown", delta_color="normal" if intra_avg_pnl > 0 else "inverse")
     c5.metric("💸 Profit Taken (1 Qty)", f"₹{profit_taken_1qty:.2f}", help="Total pure points captured today, assuming exactly 1 share bought/sold per trade.")
     st.divider()
-    
-    # ... (Keep the rest of your Tab 3 code exactly as it is) ...
     
     st.markdown("### 📡 Live Signal Radar")
     df_live_signals = load_live_intraday_signals()
@@ -622,30 +510,24 @@ with tab3:
 with tab4:
     st.subheader("🏛️ Macro Portfolio Command Center")
     
-    # --- FETCH REAL-TIME ACCOUNT METRICS ---
     try:
-        conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
-        cursor = conn.cursor()
+        # For simple SELECT queries, we use the pool
+        seed_df = conn.query("SELECT key_value FROM system_config WHERE key_name = 'STARTING_MACRO_CAPITAL'")
+        seed_capital = float(seed_df.iloc[0]['key_value']) if not seed_df.empty else 100000.0
         
-        cursor.execute("SELECT key_value FROM system_config WHERE key_name = 'STARTING_MACRO_CAPITAL'")
-        seed_res = cursor.fetchone()
-        seed_capital = float(seed_res[0]) if seed_res else 100000.0
+        realized_df = conn.query("SELECT SUM(COALESCE(net_realized_pnl, 0)) as pnl FROM gold_signal_ledger WHERE target_timeframe = '1d' AND verdict = 'CLOSED'")
+        realized_pnl = float(realized_df.iloc[0]['pnl'] or 0.0)
         
-        cursor.execute("SELECT SUM(COALESCE(net_realized_pnl, 0)) FROM gold_signal_ledger WHERE target_timeframe = '1d' AND verdict = 'CLOSED'")
-        realized_pnl = float(cursor.fetchone()[0] or 0.0)
+        invested_df = conn.query("SELECT SUM(COALESCE(allocated_capital, 0)) as inv FROM gold_signal_ledger WHERE target_timeframe = '1d' AND verdict = 'PENDING'")
+        invested_capital = float(invested_df.iloc[0]['inv'] or 0.0)
         
-        cursor.execute("SELECT SUM(COALESCE(allocated_capital, 0)) FROM gold_signal_ledger WHERE target_timeframe = '1d' AND verdict = 'PENDING'")
-        invested_capital = float(cursor.fetchone()[0] or 0.0)
-        
-        # 🚀 THE FIX: Use gold_screener_latest instead of scanning the entire silver_1d_macro table
-        cursor.execute("""
-            SELECT SUM((s.latest_close - g.entry_price) * g.quantity) 
+        unrealized_df = conn.query("""
+            SELECT SUM((s.latest_close - g.entry_price) * g.quantity) as upnl
             FROM gold_signal_ledger g
             JOIN gold_screener_latest s ON g.ticker = s.ticker
             WHERE g.target_timeframe = '1d' AND g.verdict = 'PENDING'
         """)
-        unrealized_pnl = float(cursor.fetchone()[0] or 0.0)
-        conn.close()
+        unrealized_pnl = float(unrealized_df.iloc[0]['upnl'] or 0.0)
         
         current_equity = seed_capital + realized_pnl + unrealized_pnl
         available_cash = (seed_capital + realized_pnl) - invested_capital
@@ -653,7 +535,6 @@ with tab4:
         
         st.markdown("<style>.big-font {font-size:30px !important; font-weight: bold; color: #E0E0E0;}</style>", unsafe_allow_html=True)
         
-        # Expanded layout to 5 columns to introduce Net Realized Profit
         dash_c1, dash_c2, dash_c3, dash_c4, dash_c5 = st.columns(5)
         dash_c1.metric(label="💰 Total Macro Equity", value=f"₹{current_equity:,.2f}", delta=f"{total_growth_pct:.2f}% Net Return")
         dash_c2.metric(label="💵 Available Cash", value=f"₹{available_cash:,.2f}")
@@ -662,23 +543,19 @@ with tab4:
         dash_c5.metric(label="💸 Net Realized Profit", value=f"₹{realized_pnl:,.2f}", help="Total harvested profit with 0.25% brokerage, taxes, and slippage already deducted.")
         st.divider()
 
-        # --- 🏦 CAPITAL INJECTION MODULE ---
         with st.expander("🏦 Manage Portfolio Capital"):
             col_a, col_b = st.columns([3, 1])
             with col_a:
                 new_capital = st.number_input("Update Total Seed Capital (₹)", min_value=10000, value=int(seed_capital), step=10000)
             with col_b:
-                st.write("") # Spacing
+                st.write("") 
                 st.write("") 
                 if st.button("Inject Capital"):
                     try:
+                        # DML MUST use psycopg2 directly
                         conn_update = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
                         cursor_update = conn_update.cursor()
-                        cursor_update.execute("""
-                            UPDATE system_config 
-                            SET key_value = %s, last_updated = NOW() 
-                            WHERE key_name = 'STARTING_MACRO_CAPITAL'
-                        """, (str(new_capital),))
+                        cursor_update.execute("UPDATE system_config SET key_value = %s, last_updated = NOW() WHERE key_name = 'STARTING_MACRO_CAPITAL'", (str(new_capital),))
                         conn_update.commit()
                         conn_update.close()
                         st.success(f"✅ Capital successfully updated to ₹{new_capital:,.2f}")
@@ -687,7 +564,6 @@ with tab4:
                     except Exception as e:
                         st.error(f"Failed to inject capital: {e}")
 
-    
     except Exception as e:
         st.warning(f"Failed to load Portfolio Metrics: {e}")
         
