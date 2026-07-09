@@ -594,6 +594,8 @@ with tab4:
     if not df_macro_curve.empty:
         df_macro_curve["Structural Growth (%)"] = df_macro_curve["Daily PNL (%)"].cumsum()
         st.plotly_chart(px.area(df_macro_curve, x="Date", y="Structural Growth (%)", title="Macro Framework Long-Term Equity Curve"), use_container_width=True)
+    else:
+        st.info("📈 Equity Curve Standby: No settled 1D macro trades closed within this lookback window.")
 
 # ------------------------------------------
 # TAB 5: ETF SNIPER RADAR
