@@ -40,13 +40,13 @@ def load_ledger_scoreboard():
     try:
         return conn.query("SELECT COUNT(*) as total_signals, SUM(CASE WHEN verdict = 'WIN' THEN 1 ELSE 0 END) as total_wins, ROUND(AVG(pnl_percentage), 2) as average_return FROM gold_signal_ledger WHERE verdict != 'PENDING';")
     except Exception as e:
-        # 🚀 Diagnostic output so we know EXACTLY why it fails
         st.error(f"Ledger Scoreboard SQL Error: {e}") 
         return pd.DataFrame()
 
 @st.cache_data(ttl=60)
 def load_active_portfolio(timeframe):
     try:
+        # 🚀 ARCHITECTURAL UPGRADE: Direct 15m Candle Price Extraction
         query = f"""
             WITH aggregated_ledger AS (
                 SELECT 
@@ -56,6 +56,14 @@ def load_active_portfolio(timeframe):
                 FROM gold_signal_ledger
                 WHERE verdict = 'PENDING' AND target_timeframe = '{timeframe}'
                 GROUP BY ticker, target_timeframe
+            ),
+            latest_15m_price AS (
+                SELECT ticker, close as latest_close
+                FROM (
+                    SELECT ticker, close, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn
+                    FROM silver_technical_indicators
+                ) sub
+                WHERE rn = 1
             )
             SELECT 
                 g.ticker AS "Ticker",
@@ -69,14 +77,12 @@ def load_active_portfolio(timeframe):
                 TO_CHAR(g.first_entry_date, 'Mon DD, YYYY - HH12:MI AM') AS "Entry Time",
                 ROUND(g.avg_entry_price::numeric, 2) AS "Avg Entry Price",
                 ROUND(s.latest_close::numeric, 2) AS "Current Price",
-                -- 🚀 FIX: Removed the '%' from the SQL alias
                 ROUND( (((s.latest_close - g.avg_entry_price) / g.avg_entry_price) * 100)::numeric, 2 ) AS "Unrealized_PNL"
             FROM aggregated_ledger g
-            JOIN gold_screener_latest s ON g.ticker = s.ticker
+            JOIN latest_15m_price s ON g.ticker = s.ticker
             ORDER BY ((s.latest_close - g.avg_entry_price) / g.avg_entry_price) DESC;
         """
         df = conn.query(query)
-        # 🚀 FIX: Add the '%' back via Pandas to bypass the DB choke point
         if not df.empty:
             df = df.rename(columns={"Unrealized_PNL": "Unrealized PNL (%)"})
         return df
@@ -102,7 +108,6 @@ def load_daily_executions(timeframe):
                   AND DATE(g.signal_date) = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
                 ORDER BY g.ticker, g.signal_date DESC
             )
-            -- 🚀 FIX: Removed the '%' from the SQL alias
             SELECT "Ticker", "Action", "Execution Price", "Exit Price", "Execution Time", "Exit Time", "Status", 
             COALESCE(NULLIF(ROUND(pnl_percentage::numeric, 2), 0.00), ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2), 0.00) AS "PNL_Pct"
             FROM today_activity;
@@ -138,7 +143,6 @@ def load_period_performance(timeframe, days):
                   AND b.signal_date >= NOW() - INTERVAL '{days} days' 
                   AND b.verdict != 'PENDING' AND b.signal_type !~* 'SELL' {strict_filter}
             )
-            -- 🚀 FIX: Removed the '%' from the SQL alias
             SELECT trade_date as "Date", COALESCE(ROUND(SUM(true_pnl)::numeric, 2), 0.00) as "Daily_PNL"
             FROM paired_trades GROUP BY trade_date ORDER BY trade_date ASC;
         """
