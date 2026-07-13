@@ -345,8 +345,8 @@ with st.sidebar.expander("Authenticate Broker"):
                 except Exception as e: st.error(f"DB Error: {e}")
 
 st.sidebar.divider()
-if data_result[0] is None: st.stop() 
-df, filename = data_result
+df = data_result[0] if data_result[0] is not None else pd.DataFrame()
+filename = data_result[1]
 
 st.sidebar.title("🌍 Global Sentinel")
 if st.sidebar.button("🔄 Clear Oracle Cache"): st.cache_data.clear(); st.rerun()
