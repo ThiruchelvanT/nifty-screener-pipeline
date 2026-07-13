@@ -351,7 +351,7 @@ filename = data_result[1]
 st.sidebar.title("🌍 Global Sentinel")
 if st.sidebar.button("🔄 Clear Oracle Cache"): st.cache_data.clear(); st.rerun()
 
-nifty_proxy = df[df['ticker'] == 'RELIANCE.NS'].iloc[0] if 'RELIANCE.NS' in df['ticker'].values else None
+nifty_proxy = df[df['ticker'] == 'RELIANCE.NS'].iloc[0] if not df.empty and 'RELIANCE.NS' in df['ticker'].values else None
 if nifty_proxy is not None: st.sidebar.metric("Nifty Health Proxy", "✅ STABLE" if nifty_proxy['smart_money_daily'] == 'ACCUMULATION' else "⚠️ WEAK")
 
 st.sidebar.divider()
@@ -408,7 +408,7 @@ with tab1:
     except Exception as e: 
         st.warning(f"Ledger Database Offline. Error: {e}")
     
-   st.divider()
+    st.divider()
     if df.empty:
         st.warning("⚠️ Screener vault (`gold_screener_latest`) is empty or initializing. Check your DB ingestion pipelines.")
     else:
@@ -425,13 +425,14 @@ with tab1:
         st.divider()
         search_query = st.text_input("🔍 Search Stock Symbol", "").upper()
         st.dataframe(df[df['ticker'].str.contains(search_query, na=False)] if search_query else df[['ticker', 'latest_close', 'stochrsi_15m', 'smart_money_daily', 'trend_15m']], use_container_width=True, height=400)
+
 # ------------------------------------------
 # TAB 2: THE X-RAY Sandbox
 # ------------------------------------------
 with tab2:
     st.subheader("🔬 Institutional Indicator X-Ray")
     ctrl_col1, ctrl_col2 = st.columns([2, 1])
-    with ctrl_col1: target_ticker = st.selectbox("Select Asset to Analyze:", df['ticker'].sort_values().unique())
+    with ctrl_col1: target_ticker = st.selectbox("Select Asset to Analyze:", df['ticker'].sort_values().unique() if not df.empty else [])
     with ctrl_col2: target_timeframe = {"15m (Intraday)": "15m", "1h (Swing)": "1h", "1d (Macro)": "1d"}[st.radio("Lens (Timeframe):", ["15m (Intraday)", "1h (Swing)", "1d (Macro)"], horizontal=True)]
     
     if target_ticker:
