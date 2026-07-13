@@ -408,21 +408,23 @@ with tab1:
     except Exception as e: 
         st.warning(f"Ledger Database Offline. Error: {e}")
     
-    st.divider()
-    signal_type = st.radio("⚔️ **SIGNAL SELECTION:**", ["BUY (The Rebound)", "SELL (The Collapse)"], horizontal=True)
-    is_buy = "BUY" in signal_type
-    st.subheader("🔥 THE ELITE BULLS" if is_buy else "💀 THE FALLEN")
-    top_10 = df[df['trend_15m'] == ('BULLISH' if is_buy else 'BEARISH')].sort_values(by='stochrsi_15m', ascending=is_buy).head(10)
-    if not top_10.empty:
-        cols = st.columns(5)
-        for idx, (i, row) in enumerate(top_10.iterrows()):
-            cols[idx % 5].metric(label=row['ticker'], value=f"₹{row['latest_close']}", delta="REBOUND" if is_buy else "COLLAPSE", delta_color="normal" if is_buy else "inverse")
-        st.dataframe(top_10[['ticker', 'latest_close', 'stochrsi_15m', 'smart_money_daily', 'trend_15m']], use_container_width=True)
-    else: st.error("### 🚫 NO TRADE ZONE")
-    st.divider()
-    search_query = st.text_input("🔍 Search Stock Symbol", "").upper()
-    st.dataframe(df[df['ticker'].str.contains(search_query, na=False)] if search_query else df[['ticker', 'latest_close', 'stochrsi_15m', 'smart_money_daily', 'trend_15m']], use_container_width=True, height=400)
-
+   st.divider()
+    if df.empty:
+        st.warning("⚠️ Screener vault (`gold_screener_latest`) is empty or initializing. Check your DB ingestion pipelines.")
+    else:
+        signal_type = st.radio("⚔️ **SIGNAL SELECTION:**", ["BUY (The Rebound)", "SELL (The Collapse)"], horizontal=True)
+        is_buy = "BUY" in signal_type
+        st.subheader("🔥 THE ELITE BULLS" if is_buy else "💀 THE FALLEN")
+        top_10 = df[df['trend_15m'] == ('BULLISH' if is_buy else 'BEARISH')].sort_values(by='stochrsi_15m', ascending=is_buy).head(10)
+        if not top_10.empty:
+            cols = st.columns(5)
+            for idx, (i, row) in enumerate(top_10.iterrows()):
+                cols[idx % 5].metric(label=row['ticker'], value=f"₹{row['latest_close']}", delta="REBOUND" if is_buy else "COLLAPSE", delta_color="normal" if is_buy else "inverse")
+            st.dataframe(top_10[['ticker', 'latest_close', 'stochrsi_15m', 'smart_money_daily', 'trend_15m']], use_container_width=True)
+        else: st.error("### 🚫 NO TRADE ZONE")
+        st.divider()
+        search_query = st.text_input("🔍 Search Stock Symbol", "").upper()
+        st.dataframe(df[df['ticker'].str.contains(search_query, na=False)] if search_query else df[['ticker', 'latest_close', 'stochrsi_15m', 'smart_money_daily', 'trend_15m']], use_container_width=True, height=400)
 # ------------------------------------------
 # TAB 2: THE X-RAY Sandbox
 # ------------------------------------------
