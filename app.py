@@ -165,8 +165,10 @@ def fetch_macro_trade_lifecycle(timeframe, days):
                 ROUND(settlement_price::numeric, 2) AS "Sold Price",
                 COALESCE(ROUND(pnl_percentage::numeric, 2), 0.00) AS "Net Return", verdict AS "Status"
             FROM gold_signal_ledger
-            WHERE target_timeframe = '{timeframe}' AND signal_date >= NOW() - INTERVAL '{days} days' AND signal_type !~* 'SELL' 
-            ORDER BY signal_date DESC;
+            WHERE target_timeframe = '{timeframe}' 
+              AND (signal_date >= NOW() - INTERVAL '{days} days' OR settlement_date >= NOW() - INTERVAL '{days} days') 
+              AND signal_type !~* 'SELL' 
+            ORDER BY COALESCE(settlement_date, signal_date) DESC;
         """
         return conn.query(query)
     except Exception: return pd.DataFrame()
