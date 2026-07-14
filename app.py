@@ -46,7 +46,6 @@ def load_ledger_scoreboard():
 @st.cache_data(ttl=60)
 def load_active_portfolio(timeframe):
     try:
-        # 🚀 ARCHITECTURAL UPGRADE: Direct 15m Candle Price Extraction
         query = f"""
             WITH aggregated_ledger AS (
                 SELECT 
@@ -140,7 +139,7 @@ def load_period_performance(timeframe, days):
                     ) as true_pnl
                 FROM gold_signal_ledger b
                 WHERE b.target_timeframe = '{timeframe}' 
-                  AND b.signal_date >= NOW() - INTERVAL '{days} days' 
+                  AND COALESCE(b.settlement_date, b.signal_date) >= NOW() - INTERVAL '{days} days' 
                   AND b.verdict != 'PENDING' AND b.signal_type !~* 'SELL' {strict_filter}
             )
             SELECT trade_date as "Date", COALESCE(ROUND(SUM(true_pnl)::numeric, 2), 0.00) as "Daily_PNL"
@@ -157,6 +156,7 @@ def load_period_performance(timeframe, days):
 @st.cache_data(ttl=60)
 def fetch_macro_trade_lifecycle(timeframe, days):
     try:
+        # 🚀 ARCHITECTURAL FIX: COALESCE forces visibility even if dates misalign
         query = f"""
             SELECT 
                 ticker AS "Ticker", TO_CHAR(signal_date, 'Mon DD - HH12:MI AM') AS "Buy Time", 
@@ -166,7 +166,7 @@ def fetch_macro_trade_lifecycle(timeframe, days):
                 COALESCE(ROUND(pnl_percentage::numeric, 2), 0.00) AS "Net Return", verdict AS "Status"
             FROM gold_signal_ledger
             WHERE target_timeframe = '{timeframe}' 
-              AND (signal_date >= NOW() - INTERVAL '{days} days' OR settlement_date >= NOW() - INTERVAL '{days} days') 
+              AND (signal_date >= NOW() - INTERVAL '{days} days' OR COALESCE(settlement_date, signal_date) >= NOW() - INTERVAL '{days} days') 
               AND signal_type !~* 'SELL' 
             ORDER BY COALESCE(settlement_date, signal_date) DESC;
         """
@@ -300,7 +300,6 @@ data_result = load_gold_data()
 st.sidebar.divider()
 st.sidebar.subheader("🔀 Data Source Router")
 try:
-    # ⚠️ For the Sidebar DML (Updates), we must use a direct psycopg2 cursor, not the Streamlit read-only pool
     pg_conn = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
     cursor = pg_conn.cursor()
     cursor.execute("SELECT key_value FROM system_config WHERE key_name = 'ACTIVE_DATA_SOURCE';")
@@ -351,6 +350,7 @@ df = data_result[0] if data_result[0] is not None else pd.DataFrame()
 filename = data_result[1]
 
 st.sidebar.title("🌍 Global Sentinel")
+# 🚀 CRITICAL: You must click this button after deploying to wipe the old snapshot
 if st.sidebar.button("🔄 Clear Oracle Cache"): st.cache_data.clear(); st.rerun()
 
 nifty_proxy = df[df['ticker'] == 'RELIANCE.NS'].iloc[0] if not df.empty and 'RELIANCE.NS' in df['ticker'].values else None
@@ -578,7 +578,6 @@ with tab4:
                 st.write("") 
                 if st.button("Inject Capital"):
                     try:
-                        # DML MUST use psycopg2 directly
                         conn_update = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
                         cursor_update = conn_update.cursor()
                         cursor_update.execute("UPDATE system_config SET key_value = %s, last_updated = NOW() WHERE key_name = 'STARTING_MACRO_CAPITAL'", (str(new_capital),))
