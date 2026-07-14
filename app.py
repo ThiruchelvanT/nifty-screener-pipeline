@@ -153,25 +153,28 @@ def load_period_performance(timeframe, days):
         st.error(f"Performance Graph Error: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_macro_trade_lifecycle(timeframe, days):
     try:
-        # 🚀 ARCHITECTURAL FIX: COALESCE forces visibility even if dates misalign
+        # 🚀 CACHE BUSTER & TICKER GROUPING FIX
         query = f"""
             SELECT 
-                ticker AS "Ticker", TO_CHAR(signal_date, 'Mon DD - HH12:MI AM') AS "Buy Time", 
+                ticker AS "Ticker", 
+                TO_CHAR(signal_date, 'Mon DD - HH12:MI AM') AS "Buy Time", 
                 ROUND(entry_price::numeric, 2) AS "Buy Price",
                 COALESCE(TO_CHAR(settlement_date, 'Mon DD - HH12:MI AM'), CASE WHEN verdict != 'PENDING' THEN 'Closed' ELSE 'Active' END) AS "Sold Time",
                 ROUND(settlement_price::numeric, 2) AS "Sold Price",
-                COALESCE(ROUND(pnl_percentage::numeric, 2), 0.00) AS "Net Return", verdict AS "Status"
+                COALESCE(ROUND(pnl_percentage::numeric, 2), 0.00) AS "Net Return", 
+                verdict AS "Status"
             FROM gold_signal_ledger
             WHERE target_timeframe = '{timeframe}' 
               AND (signal_date >= NOW() - INTERVAL '{days} days' OR COALESCE(settlement_date, signal_date) >= NOW() - INTERVAL '{days} days') 
               AND signal_type !~* 'SELL' 
-            ORDER BY COALESCE(settlement_date, signal_date) DESC;
+            ORDER BY ticker ASC, COALESCE(settlement_date, signal_date) DESC;
         """
         return conn.query(query)
-    except Exception: return pd.DataFrame()
+    except Exception as e: 
+        return pd.DataFrame()
 
 @st.cache_data(ttl=900) 
 def load_gold_data():
