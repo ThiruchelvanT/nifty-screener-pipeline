@@ -100,14 +100,14 @@ def load_daily_executions(timeframe):
                     COALESCE(CASE WHEN g.signal_type !~* 'SELL' THEN ROUND(g.entry_price::numeric, 2) ELSE NULL END, (SELECT ROUND(entry_price::numeric, 2) FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1)) AS "Execution Price",
                     COALESCE(CASE WHEN g.signal_type ~* 'SELL' THEN ROUND(g.entry_price::numeric, 2) ELSE NULL END, (SELECT ROUND(entry_price::numeric, 2) FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1)) AS "Exit Price",
                     
-                    -- 🛡️ HARDENED IST TIME ZONE CASTING
-                    TO_CHAR(COALESCE(CASE WHEN g.signal_type !~* 'SELL' THEN g.signal_date ELSE NULL END, (SELECT signal_date FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1), g.signal_date) AT TIME ZONE 'Asia/Kolkata', 'HH12:MI AM') AS "Execution Time",
-                    COALESCE(TO_CHAR(CASE WHEN g.signal_type ~* 'SELL' THEN g.signal_date ELSE NULL END AT TIME ZONE 'Asia/Kolkata', 'HH12:MI AM'), (SELECT TO_CHAR(signal_date AT TIME ZONE 'Asia/Kolkata', 'HH12:MI AM') FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1), 'Active') AS "Exit Time",
+                    -- 🛡️ STRICT NAIVE READ (No Timezone Math)
+                    TO_CHAR(COALESCE(CASE WHEN g.signal_type !~* 'SELL' THEN g.signal_date ELSE NULL END, (SELECT signal_date FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1), g.signal_date), 'HH12:MI AM') AS "Execution Time",
+                    COALESCE(TO_CHAR(CASE WHEN g.signal_type ~* 'SELL' THEN g.signal_date ELSE NULL END, 'HH12:MI AM'), (SELECT TO_CHAR(signal_date, 'HH12:MI AM') FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1), 'Active') AS "Exit Time",
                     
                     g.verdict AS "Status", g.pnl_percentage
                 FROM gold_signal_ledger g
                 WHERE g.target_timeframe = '{timeframe}' 
-                  AND DATE(g.signal_date AT TIME ZONE 'Asia/Kolkata') = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
+                  AND DATE(g.signal_date) = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
                 ORDER BY g.ticker, g.signal_date DESC
             )
             SELECT "Ticker", "Action", "Execution Price", "Exit Price", "Execution Time", "Exit Time", "Status", 
@@ -160,10 +160,10 @@ def fetch_macro_trade_lifecycle(timeframe, days):
         query = f"""
             SELECT 
                 ticker AS "Ticker", 
-                -- 🛡️ HARDENED IST TIME ZONE CASTING
-                TO_CHAR(signal_date AT TIME ZONE 'Asia/Kolkata', 'Mon DD - HH12:MI AM') AS "Buy Time", 
+                -- 🛡️ STRICT NAIVE READ (No Timezone Math)
+                TO_CHAR(signal_date, 'Mon DD - HH12:MI AM') AS "Buy Time", 
                 ROUND(entry_price::numeric, 2) AS "Buy Price",
-                COALESCE(TO_CHAR(settlement_date AT TIME ZONE 'Asia/Kolkata', 'Mon DD - HH12:MI AM'), CASE WHEN verdict != 'PENDING' THEN 'Closed' ELSE 'Active' END) AS "Sold Time",
+                COALESCE(TO_CHAR(settlement_date, 'Mon DD - HH12:MI AM'), CASE WHEN verdict != 'PENDING' THEN 'Closed' ELSE 'Active' END) AS "Sold Time",
                 ROUND(settlement_price::numeric, 2) AS "Sold Price",
                 COALESCE(ROUND(pnl_percentage::numeric, 2), 0.00) AS "Net Return", 
                 verdict AS "Status"
