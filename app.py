@@ -99,21 +99,22 @@ def load_daily_executions(timeframe):
                     COALESCE((SELECT signal_type FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1), g.signal_type) AS "Action",
                     COALESCE(CASE WHEN g.signal_type !~* 'SELL' THEN ROUND(g.entry_price::numeric, 2) ELSE NULL END, (SELECT ROUND(entry_price::numeric, 2) FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1)) AS "Execution Price",
                     COALESCE(CASE WHEN g.signal_type ~* 'SELL' THEN ROUND(g.entry_price::numeric, 2) ELSE NULL END, (SELECT ROUND(entry_price::numeric, 2) FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1)) AS "Exit Price",
-                    TO_CHAR(COALESCE(CASE WHEN g.signal_type !~* 'SELL' THEN g.signal_date ELSE NULL END, (SELECT signal_date FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1), g.signal_date), 'HH12:MI AM') AS "Execution Time",
-                    COALESCE(TO_CHAR(CASE WHEN g.signal_type ~* 'SELL' THEN g.signal_date ELSE NULL END, 'HH12:MI AM'), (SELECT TO_CHAR(signal_date, 'HH12:MI AM') FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1), 'Active') AS "Exit Time",
+                    
+                    -- 🛡️ HARDENED IST TIME ZONE CASTING
+                    TO_CHAR(COALESCE(CASE WHEN g.signal_type !~* 'SELL' THEN g.signal_date ELSE NULL END, (SELECT signal_date FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type !~* 'SELL' AND signal_date <= g.signal_date ORDER BY signal_date DESC LIMIT 1), g.signal_date) AT TIME ZONE 'Asia/Kolkata', 'HH12:MI AM') AS "Execution Time",
+                    COALESCE(TO_CHAR(CASE WHEN g.signal_type ~* 'SELL' THEN g.signal_date ELSE NULL END AT TIME ZONE 'Asia/Kolkata', 'HH12:MI AM'), (SELECT TO_CHAR(signal_date AT TIME ZONE 'Asia/Kolkata', 'HH12:MI AM') FROM gold_signal_ledger WHERE ticker = g.ticker AND signal_type ~* 'SELL' AND signal_date >= g.signal_date ORDER BY signal_date ASC LIMIT 1), 'Active') AS "Exit Time",
+                    
                     g.verdict AS "Status", g.pnl_percentage
                 FROM gold_signal_ledger g
                 WHERE g.target_timeframe = '{timeframe}' 
-                  AND DATE(g.signal_date) = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
+                  AND DATE(g.signal_date AT TIME ZONE 'Asia/Kolkata') = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
                 ORDER BY g.ticker, g.signal_date DESC
             )
             SELECT "Ticker", "Action", "Execution Price", "Exit Price", "Execution Time", "Exit Time", "Status", 
-            COALESCE(NULLIF(ROUND(pnl_percentage::numeric, 2), 0.00), ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2), 0.00) AS "PNL_Pct"
+            COALESCE(NULLIF(ROUND(pnl_percentage::numeric, 2), 0.00), ROUND((("Exit Price" - "Execution Price") / "Execution Price" * 100)::numeric, 2), 0.00) AS "PNL (%)"
             FROM today_activity;
         """
         df = conn.query(query)
-        if not df.empty:
-            df = df.rename(columns={"PNL_Pct": "PNL (%)"})
         return df
     except Exception as e:
         st.error(f"Executions Load Error: {e}")
@@ -156,13 +157,13 @@ def load_period_performance(timeframe, days):
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_macro_trade_lifecycle(timeframe, days):
     try:
-        # 🚀 CACHE BUSTER & TICKER GROUPING FIX
         query = f"""
             SELECT 
                 ticker AS "Ticker", 
-                TO_CHAR(signal_date, 'Mon DD - HH12:MI AM') AS "Buy Time", 
+                -- 🛡️ HARDENED IST TIME ZONE CASTING
+                TO_CHAR(signal_date AT TIME ZONE 'Asia/Kolkata', 'Mon DD - HH12:MI AM') AS "Buy Time", 
                 ROUND(entry_price::numeric, 2) AS "Buy Price",
-                COALESCE(TO_CHAR(settlement_date, 'Mon DD - HH12:MI AM'), CASE WHEN verdict != 'PENDING' THEN 'Closed' ELSE 'Active' END) AS "Sold Time",
+                COALESCE(TO_CHAR(settlement_date AT TIME ZONE 'Asia/Kolkata', 'Mon DD - HH12:MI AM'), CASE WHEN verdict != 'PENDING' THEN 'Closed' ELSE 'Active' END) AS "Sold Time",
                 ROUND(settlement_price::numeric, 2) AS "Sold Price",
                 COALESCE(ROUND(pnl_percentage::numeric, 2), 0.00) AS "Net Return", 
                 verdict AS "Status"
@@ -353,7 +354,6 @@ df = data_result[0] if data_result[0] is not None else pd.DataFrame()
 filename = data_result[1]
 
 st.sidebar.title("🌍 Global Sentinel")
-# 🚀 CRITICAL: You must click this button after deploying to wipe the old snapshot
 if st.sidebar.button("🔄 Clear Oracle Cache"): st.cache_data.clear(); st.rerun()
 
 nifty_proxy = df[df['ticker'] == 'RELIANCE.NS'].iloc[0] if not df.empty and 'RELIANCE.NS' in df['ticker'].values else None
@@ -467,8 +467,67 @@ with tab2:
 # TAB 3: INTRADAY LEDGER (15m)
 # ------------------------------------------
 with tab3:
-    st.subheader("⚡ Intraday Sniper Operations")
+    st.subheader("⚡ Intraday Command Center")
     
+    try:
+        # 💰 Independent Intraday Wallet Tracking
+        seed_df_id = conn.query("SELECT key_value FROM system_config WHERE key_name = 'STARTING_INTRADAY_CAPITAL'")
+        seed_capital_id = float(seed_df_id.iloc[0]['key_value']) if not seed_df_id.empty else 50000.0
+        
+        realized_df_id = conn.query("SELECT SUM(COALESCE(net_realized_pnl, 0)) as pnl FROM gold_signal_ledger WHERE target_timeframe = '15m' AND verdict = 'CLOSED'")
+        realized_pnl_id = float(realized_df_id.iloc[0]['pnl'] or 0.0)
+        
+        invested_df_id = conn.query("SELECT SUM(COALESCE(allocated_capital, 0)) as inv FROM gold_signal_ledger WHERE target_timeframe = '15m' AND verdict = 'PENDING'")
+        invested_capital_id = float(invested_df_id.iloc[0]['inv'] or 0.0)
+        
+        unrealized_df_id = conn.query("""
+            SELECT SUM((s.latest_close - g.entry_price) * g.quantity) as upnl
+            FROM gold_signal_ledger g
+            JOIN (
+                SELECT ticker, close as latest_close, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY datetime DESC) as rn
+                FROM silver_technical_indicators
+            ) s ON g.ticker = s.ticker AND s.rn = 1
+            WHERE g.target_timeframe = '15m' AND g.verdict = 'PENDING'
+        """)
+        unrealized_pnl_id = float(unrealized_df_id.iloc[0]['upnl'] or 0.0)
+        
+        current_equity_id = seed_capital_id + realized_pnl_id + unrealized_pnl_id
+        available_cash_id = (seed_capital_id + realized_pnl_id) - invested_capital_id
+        total_growth_pct_id = ((current_equity_id - seed_capital_id) / seed_capital_id) * 100 if seed_capital_id > 0 else 0.0
+        
+        st.markdown("<style>.big-font {font-size:30px !important; font-weight: bold; color: #E0E0E0;}</style>", unsafe_allow_html=True)
+        
+        id_c1, id_c2, id_c3, id_c4, id_c5 = st.columns(5)
+        id_c1.metric(label="💰 Total Intraday Equity", value=f"₹{current_equity_id:,.2f}", delta=f"{total_growth_pct_id:.2f}% Net Return")
+        id_c2.metric(label="💵 Available Cash", value=f"₹{available_cash_id:,.2f}")
+        id_c3.metric(label="🔒 Invested Capital", value=f"₹{invested_capital_id:,.2f}")
+        id_c4.metric(label="📈 Live Unrealized PNL", value=f"₹{unrealized_pnl_id:,.2f}", delta="Fluctuating", delta_color="off")
+        id_c5.metric(label="💸 Net Realized Profit", value=f"₹{realized_pnl_id:,.2f}")
+        st.divider()
+
+        with st.expander("🏦 Manage Intraday Capital Wallet"):
+            col_a_id, col_b_id = st.columns([3, 1])
+            with col_a_id:
+                new_capital_id = st.number_input("Update Intraday Seed Capital (₹)", min_value=10000, value=int(seed_capital_id), step=10000)
+            with col_b_id:
+                st.write("") 
+                st.write("") 
+                if st.button("Inject Intraday Capital"):
+                    try:
+                        conn_update = psycopg2.connect(host=st.secrets["DB_HOST"], port=st.secrets["DB_PORT"], dbname="neondb", user=st.secrets["DB_USER"], password=st.secrets["DB_PASS"])
+                        cursor_update = conn_update.cursor()
+                        cursor_update.execute("INSERT INTO system_config (key_name, key_value, last_updated) VALUES ('STARTING_INTRADAY_CAPITAL', %s, NOW()) ON CONFLICT (key_name) DO UPDATE SET key_value = EXCLUDED.key_value, last_updated = NOW()", (str(new_capital_id),))
+                        conn_update.commit()
+                        conn_update.close()
+                        st.success(f"✅ Intraday Capital successfully updated to ₹{new_capital_id:,.2f}")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to inject capital: {e}")
+                        
+    except Exception as e:
+        st.warning(f"Failed to load Intraday Portfolio Metrics: {e}")
+
     df_intra_today = load_daily_executions('15m')
     
     if not df_intra_today.empty:
@@ -476,25 +535,20 @@ with tab3:
         df_intra_today = df_intra_today.dropna(subset=['Execution Price'])
 
     intra_pnl_today = 0.00
-    profit_taken_1qty = 0.00
-    
     if not df_intra_today.empty:
         settled_df = df_intra_today.dropna(subset=['Exit Price']).copy()
-        
         if not settled_df.empty:
             settled_df['True PNL'] = ((settled_df['Exit Price'].astype(float) - settled_df['Execution Price'].astype(float)) / settled_df['Execution Price'].astype(float)) * 100
             intra_pnl_today = settled_df['True PNL'].sum()
-            profit_taken_1qty = (settled_df['Exit Price'].astype(float) - settled_df['Execution Price'].astype(float)).sum()
 
     df_intra_portfolio = load_active_portfolio('15m')
     intra_avg_pnl = df_intra_portfolio["Unrealized PNL (%)"].mean() if not df_intra_portfolio.empty else 0.00
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Today's Executions", len(df_intra_today))
     c2.metric("Today's Settled PNL", f"{intra_pnl_today:.2f}%", delta=f"{intra_pnl_today:.2f}%")
     c3.metric("Open Intraday Positions", len(df_intra_portfolio))
     c4.metric("Avg Unrealized PNL", f"{intra_avg_pnl:.2f}%", delta="Profitable" if intra_avg_pnl > 0 else "Drawdown", delta_color="normal" if intra_avg_pnl > 0 else "inverse")
-    c5.metric("💸 Profit Taken (1 Qty)", f"₹{profit_taken_1qty:.2f}", help="Total pure points captured today, assuming exactly 1 share bought/sold per trade.")
     st.divider()
     
     st.markdown("### 📡 Live Signal Radar")
@@ -540,7 +594,6 @@ with tab4:
     st.subheader("🏛️ Macro Portfolio Command Center")
     
     try:
-        # For simple SELECT queries, we use the pool
         seed_df = conn.query("SELECT key_value FROM system_config WHERE key_name = 'STARTING_MACRO_CAPITAL'")
         seed_capital = float(seed_df.iloc[0]['key_value']) if not seed_df.empty else 100000.0
         
