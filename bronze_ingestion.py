@@ -134,8 +134,9 @@ if USE_FYERS:
         }
         response = fyers.history(data=data)
         if response.get('s') == 'ok':
+            # 🛡️ FYERS TIME FIX: Fyers gives us IST seconds natively. We just format it and stop.
             df = pd.DataFrame(response['candles'], columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
-            df['datetime'] = pd.to_datetime(df['datetime'], unit='s').dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata').dt.tz_localize(None)
+            df['datetime'] = pd.to_datetime(df['datetime'], unit='s')
             return df
         return pd.DataFrame()
 
@@ -179,6 +180,7 @@ else:
                 date_col = 'Datetime' if 'Datetime' in df.columns else 'Date'
                 df.rename(columns={date_col: 'datetime', 'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
                 
+                # 🛡️ YAHOO TIME FIX: Yahoo gives us strict UTC. We convert to IST, then strip the tag.
                 if df['datetime'].dt.tz is not None:
                     df['datetime'] = df['datetime'].dt.tz_convert('Asia/Kolkata').dt.tz_localize(None)
                     
@@ -196,6 +198,7 @@ else:
                 date_col = 'Datetime' if 'Datetime' in df.columns else 'Date'
                 df.rename(columns={date_col: 'datetime', 'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
                 
+                # 🛡️ YAHOO TIME FIX: Yahoo gives us strict UTC. We convert to IST, then strip the tag.
                 if df['datetime'].dt.tz is not None:
                     df['datetime'] = df['datetime'].dt.tz_convert('Asia/Kolkata').dt.tz_localize(None)
                     
